@@ -1,0 +1,34 @@
+# .NET build output
+bin/
+obj/
+artifacts/
+*.nupkg
+*.snupkg
+
+# Test results and coverage
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+
+# User-specific IDE files
+.idea/
+.vs/
+.vscode/
+*.user
+*.suo
+*.DotSettings.user
+
+# devenv / direnv
+.devenv/
+.devenv.flake.nix
+devenv.local.nix
+.direnv/
+.pre-commit-config.yaml
+
+# Codegraph index
+.codegraph/
+
+# OS
+.DS_Store
+Thumbs.db
