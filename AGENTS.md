@@ -23,10 +23,10 @@ not re-open them in code without being asked.
 
 ```
 src/
-  NovalistSync.Server/        ASP.NET Core app: SignalR hub, auth, persistence, blob endpoints, retention jobs
+  Novalist.Sync.Server/       ASP.NET Core app: SignalR hub, auth, persistence, blob endpoints, retention jobs
   Novalist.Sync.Contracts/    Wire records + hub interface + protocol version. Published as a NuGet package.
 tests/
-  NovalistSync.Server.Tests/
+  Novalist.Sync.Server.Tests/
   Novalist.Sync.Contracts.Tests/
 docs/
   design.md
@@ -54,12 +54,12 @@ devenv up                                      # start services (PostgreSQL) in 
 
 dotnet build                                   # build everything
 dotnet test                                    # run all tests (needs `devenv up` running)
-dotnet run --project src/NovalistSync.Server   # run the server locally
+dotnet run --project src/Novalist.Sync.Server  # run the server locally
 dotnet format                                  # format before committing
 
 # database migrations (EF Core)
-dotnet ef migrations add <Name> --project src/NovalistSync.Server
-dotnet ef database update --project src/NovalistSync.Server
+dotnet ef migrations add <Name> --project src/Novalist.Sync.Server
+dotnet ef database update --project src/Novalist.Sync.Server
 
 # contracts package
 dotnet pack src/Novalist.Sync.Contracts -c Release
@@ -78,7 +78,7 @@ These exist because the whole product is "the server can't read your novel".
 Breaking one silently breaks the product.
 
 1. **Never add decryption, key handling or CRDT logic to the server.** No
-   reference to `YDotNet` from `NovalistSync.Server`. No code that attempts to
+   reference to `YDotNet` from `Novalist.Sync.Server`. No code that attempts to
    interpret `ciphertext`, `wrapped`, blob chunk or snapshot payload bytes.
    Treat them as opaque `byte[]`.
 2. **The server may only read envelope headers** (`protoVersion`, `msgType`,

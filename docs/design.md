@@ -107,7 +107,7 @@ sees keys or ciphertext.
 | Novalist fork        | `Novalist.Sync.Client` (new)                         | CRDT, crypto, FileBridge, connection, offline queue, snapshots, key management                        |
 | Novalist fork        | `Novalist.Backend` / `Novalist.Core` (small changes) | Host Sync.Client, new `sync.*` JSON-RPC methods, hook into file watcher and save path                 |
 | Novalist fork        | `app/` (changes)                                     | Editor binding, remote cursors, sharing / members / verification / recovery screens                   |
-| novalist-sync-server | `NovalistSync.Server`                                | Hub, auth, persistence, blob endpoints, snapshot retention                                            |
+| novalist-sync-server | `Novalist.Sync.Server`                               | Hub, auth, persistence, blob endpoints, snapshot retention                                            |
 | novalist-sync-server | `Novalist.Sync.Contracts`                            | Wire records, hub interface, protocol version. Published as a **NuGet package** consumed by the fork. |
 
 Changes to Novalist itself are kept as small and isolated as possible so they
@@ -120,7 +120,7 @@ large.
 | ------------------------- | ----------------- |
 | `Novalist.Sync.Client`    | MIT               |
 | `Novalist.Sync.Contracts` | MIT               |
-| `NovalistSync.Server`     | AGPL-3.0-or-later |
+| `Novalist.Sync.Server`    | AGPL-3.0-or-later |
 
 Sync.Client lives in the Novalist fork and shares Novalist's MIT license.
 Contracts is MIT so the fork and third-party clients can depend on it without
