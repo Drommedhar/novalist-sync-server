@@ -11,9 +11,9 @@ projects.
 The server is a **blind relay and store**. It authenticates users, checks
 project membership, orders and stores encrypted messages, serves catch-up and
 snapshots, stores encrypted blob chunks, and broadcasts to connected clients.
-**It never sees plaintext or keys.** All merging (CRDT), encryption and
-validation happen in the client (`Novalist.Sync.Client`, which lives in the
-Novalist fork, not here).
+**It never sees plaintext or keys.** All merging (CRDT, done with Yjs in the
+desktop app), encryption and validation happen in the client, which lives in
+the Novalist fork, not here.
 
 The full design is in `docs/design.md`. Read it before making non-trivial
 changes. Section 11 (decision log) records choices that are already settled; do
@@ -82,10 +82,10 @@ Before declaring a task done: `dotnet build` has no warnings you introduced, and
 These exist because the whole product is "the server can't read your novel".
 Breaking one silently breaks the product.
 
-1. **Never add decryption, key handling or CRDT logic to the server.** No
-   reference to `YDotNet` from `Novalist.Sync.Server`. No code that attempts to
-   interpret `ciphertext`, `wrapped`, blob chunk or snapshot payload bytes.
-   Treat them as opaque `byte[]`.
+1. **Never add decryption, key handling or CRDT logic to the server.** No CRDT
+   library (Yjs, YDotNet or similar) in `Novalist.Sync.Server`. No code that
+   attempts to interpret `ciphertext`, `wrapped`, blob chunk or snapshot payload
+   bytes. Treat them as opaque `byte[]`.
 2. **The server may only read envelope headers** (`protoVersion`, `msgType`,
    `projectId`, `itemId`, `epoch`, `senderDeviceId`, `senderSeq`) and the public
    metadata listed in design.md §10. Do not add new plaintext fields to wire

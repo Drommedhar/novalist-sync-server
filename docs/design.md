@@ -1,6 +1,6 @@
 # Novalist Sync — Design
 
-Status: draft v0.2 · Last updated: 2026-10-18
+Status: draft v0.3 · Last updated: 2026-10-19
 
 ## 1. Goal
 
@@ -10,6 +10,15 @@ Add end-to-end encrypted (E2EE), real-time collaborative editing to **Novalist**
 contains: scenes, Codex entries, structure, images and research files. The sync
 server stores and relays data but **can never read project content, file
 content, or keys**.
+
+Novalist stays a **local-first** writing application. Sync is **optional per
+project** and off by default: a project that never enables sync works exactly as
+before, with no account, server, network connection or sync configuration
+(§5.4).
+
+Priorities, in order: **data integrity, backward compatibility, editing
+correctness, offline reliability, real-time synchronization.** When two goals
+conflict, the earlier one wins.
 
 ### Non-goals (v1)
 
@@ -26,13 +35,19 @@ content, or keys**.
 
 ## 2. Novalist as it is today
 
-Facts the design has to fit (as of v3.6):
+Facts the design has to fit (as of v3.6, with the fork on .NET 10):
 
-- **Electron + React** front end (`app/`) over a bundled **.NET 8 core process**
-  (`Novalist.Backend`), talking **JSON-RPC over stdio**. All project logic lives
+- **Electron + React** front end (`app/`) over a bundled **.NET core process**
+  (`Novalist.Backend`), talking **JSON-RPC over stdio**. The Electron main
+  process starts the backend and routes messages to it. All project logic lives
   in .NET (`Novalist.Core`).
-- **Scene editor:** custom WYSIWYG (contentEditable + DOMPurify sanitizer).
-  Codex sections use CodeMirror (Markdown). No Yjs or collaboration code exists.
+- **Scene editor:** custom WYSIWYG in an iframe (`contentEditable` + DOMPurify
+  sanitizer, `app/src/renderer/public/editor/`). Typing is largely left to the
+  browser and `document.execCommand`; changes reach the host as **complete
+  scene HTML** (`content-input.js`), and loading a scene replaces the DOM
+  (`editor-content.js`). The editor DOM also carries **presentation**: grammar
+  highlights, pagination wrappers, display URLs for images. Codex sections use
+  CodeMirror (Markdown). No Yjs or collaboration code exists.
 - **Storage:** a project is a plain folder. Scenes are **HTML** files, entities
   and metadata are **JSON**, images and research files sit alongside. Scene
   identity is a one-line comment in each file; chapter identity is a hidden
@@ -65,48 +80,71 @@ Accepted limitations:
 - The server can withhold updates. Clients detect gaps in per-device sequence
   numbers but cannot force delivery.
 - **Extensions run in the same .NET process as the sync engine**, so a malicious
-  installed extension could read keys. Keys are never sent to the renderer,
-  which at least keeps them away from extension webviews and the web content in
-  general. Users must trust the extensions they install, as they already must
-  today.
+  installed extension could read keys. Keys are never sent to the renderer or
+  the Yjs host, which at least keeps them away from extension webviews and the
+  web content in general. Users must trust the extensions they install, as they
+  already must today.
+- **The editor and the Yjs host hold plaintext.** They have to: they show and
+  merge the document. They never receive keys, ciphertext or signatures (§4.3).
 
 ## 4. Architecture
 
 ```
-┌──────────────── Novalist (fork) ─────────────────────────────┐
-│ Electron renderer (React)                                     │
-│   Scene editor ── binding: local edits ⇄ remote patches       │
-│        │  JSON-RPC over stdio (no keys, no ciphertext)        │
-│ Novalist.Backend (.NET 8)                                     │
-│   ├─ Novalist.Core (existing project logic, file watcher)     │
-│   └─ Novalist.Sync.Client                                     │
-│        ├─ YDotNet  (CRDT docs per project item)               │
-│        ├─ NSec     (all crypto)                               │
-│        ├─ FileBridge (CRDT ⇄ HTML/JSON files on disk)         │
-│        ├─ SQLite   (sync state, keys — outside project folder)│
-│        └─ SignalR client                                      │
-└──────────────────────────┬────────────────────────────────────┘
+┌──────────────── Novalist (fork) ──────────────────────────────────┐
+│ Electron renderer (React)                                          │
+│   Scene editor iframe (existing contentEditable editor)            │
+│     └─ NovalistYjsBinding: local edits → Yjs, Yjs → DOM patches    │
+│        │  MessagePort (plaintext Yjs updates, no keys)             │
+│ Yjs host (Electron utilityProcess)                                 │
+│   └─ YjsDocumentManager                                            │
+│        ├─ Y.Doc per project item (Y.XmlFragment / Y.Map / Y.Text)  │
+│        ├─ Projection: Y.Doc → HTML / JSON                          │
+│        └─ Import: HTML / JSON → Y.Doc (open, outside edits)        │
+│        │  MessagePort → main → JSON-RPC over stdio (no keys)       │
+│ Novalist.Backend (.NET)                                            │
+│   ├─ Novalist.Core (existing project logic, files, file watcher)   │
+│   └─ Novalist.Sync.Client (only for synced projects)               │
+│        ├─ SQLite: durable Yjs log, outgoing queue, sync state,     │
+│        │          keys (app data, never in the project folder)     │
+│        ├─ NSec (all crypto: seal, verify, wrap)                    │
+│        └─ SignalR client                                           │
+└──────────────────────────┬─────────────────────────────────────────┘
                            │ TLS WebSocket, ciphertext only
-┌──────────────────────────▼────────────────────────────────────┐
-│ novalist-sync-server (ASP.NET Core)                           │
-│   ├─ SignalR hub (relay, catch-up, presence)                  │
-│   ├─ Auth + membership                                        │
-│   ├─ PostgreSQL (log, snapshots, wrapped keys, epochs)        │
-│   └─ Blob store (encrypted chunks)                            │
-└───────────────────────────────────────────────────────────────┘
+┌──────────────────────────▼─────────────────────────────────────────┐
+│ novalist-sync-server (ASP.NET Core)                                │
+│   ├─ SignalR hub (relay, catch-up, presence)                       │
+│   ├─ Auth + membership                                             │
+│   ├─ PostgreSQL (log, snapshots, wrapped keys, epochs)             │
+│   └─ Blob store (encrypted chunks)                                 │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
-Rule: **if code needs a key or plaintext, it belongs in Novalist.Sync.Client.**
-The server never references YDotNet or decrypts anything. The renderer never
-sees keys or ciphertext.
+Rules:
+
+- **If code needs a key, it belongs in Novalist.Sync.Client (.NET).**
+- **If code merges or interprets document content, it belongs in the Yjs host
+  or the editor binding (JavaScript, Yjs).** There is no CRDT code in .NET and
+  no YDotNet anywhere.
+- **The server does neither.** It never decrypts, never merges, never
+  interprets a payload.
+
+Responsibilities:
+
+| Component              | Owns                                                                                      |
+| ---------------------- | ----------------------------------------------------------------------------------------- |
+| Existing editor        | User interaction, formatting, rendering, selection, editing UX                            |
+| `NovalistYjsBinding`   | Turning local edits into Yjs transactions and remote changes into precise DOM patches     |
+| `YjsDocumentManager`   | Live document state, merging, relative positions, collaborative undo, HTML/JSON projection |
+| `Novalist.Sync.Client` | Encryption, signatures, keys, durable local state, outgoing queue, server connection      |
+| Sync server            | Authorization, storage, sequencing, relaying opaque encrypted updates                     |
 
 ### 4.1 Projects and repositories
 
 | Repo                 | Project                                              | Contents                                                                                              |
 | -------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Novalist fork        | `Novalist.Sync.Client` (new)                         | CRDT, crypto, FileBridge, connection, offline queue, snapshots, key management                        |
-| Novalist fork        | `Novalist.Backend` / `Novalist.Core` (small changes) | Host Sync.Client, new `sync.*` JSON-RPC methods, hook into file watcher and save path                 |
-| Novalist fork        | `app/` (changes)                                     | Editor binding, remote cursors, sharing / members / verification / recovery screens                   |
+| Novalist fork        | `Novalist.Sync.Client` (new)                         | Crypto, keys, durable Yjs log, outgoing queue, connection, sealing snapshots. No CRDT code.           |
+| Novalist fork        | `Novalist.Backend` / `Novalist.Core` (small changes) | Host Sync.Client, new `sync.*` JSON-RPC methods, write projections, hook into file watcher            |
+| Novalist fork        | `app/` (changes)                                     | Yjs host, `YjsDocumentManager`, editor binding, remote cursors, sync and sharing screens              |
 | novalist-sync-server | `Novalist.Sync.Server`                               | Hub, auth, persistence, blob endpoints, snapshot retention                                            |
 | novalist-sync-server | `Novalist.Sync.Contracts`                            | Wire records, hub interface, protocol version. Published as a **NuGet package** consumed by the fork. |
 
@@ -127,12 +165,26 @@ Contracts is MIT so the fork and third-party clients can depend on it without
 taking on copyleft. The server is AGPL so anyone hosting a modified server for
 others must publish their changes (AGPL §13).
 
+### 4.3 Processes and IPC
+
+- The **Yjs host** is an Electron `utilityProcess`. It owns every open
+  project's `Y.Doc`s, independent of any window or editor iframe: closing a tab
+  or switching scenes never discards an edit, and updates for scenes that are
+  not open are still merged and projected to disk.
+- The **editor iframe** talks to the Yjs host over a `MessagePort` handed out by
+  the main process (`MessageChannelMain`), so keystrokes do not detour through
+  the main process.
+- The **Yjs host** talks to `.NET` through the main process and the existing
+  JSON-RPC channel. Yjs updates are binary and travel base64-encoded.
+- **Keys, ciphertext, nonces and signatures never leave .NET.** The Yjs host
+  and the renderer only ever see plaintext Yjs updates and documents.
+
 ## 5. Data model
 
 ### 5.1 The project is the sync unit
 
 One shared project = one **sync space** with one member list and one key
-hierarchy. Inside it, every item is its own CRDT document (YDotNet `Doc`),
+hierarchy. Inside it, every item is its own CRDT document (a Yjs `Y.Doc`),
 identified by a random 128-bit `itemId`:
 
 | Item kind                                                                  | CRDT shape                                                                                                                                                                                           | On disk                                 |
@@ -142,45 +194,143 @@ identified by a random 128-bit `itemId`:
 | **Codex entry / other JSON** (entities, plotlines, timeline, boards, maps) | Y.Map per file; long-form Markdown sections as Y.Text                                                                                                                                                | `.json` / `.md`                         |
 | **File manifest** (one per project)                                        | Y.Map: relative path → `BlobRef` (§9.2)                                                                                                                                                              | images, research, any other file        |
 
-Scenes are only loaded into memory when opened or when updates for them arrive.
+Scenes are only loaded into the Yjs host when opened or when updates for them
+arrive.
 
 The `itemId ↔ Novalist identity` mapping (scene ID comment, chapter marker, file
 path) lives inside the encrypted structure doc, so the server never sees names
 or paths.
 
-### 5.2 FileBridge: CRDT ⇄ filesystem
+### 5.2 Projection and file bridge: Yjs ⇄ filesystem
 
-Novalist treats the folder as the source of truth, so both directions are
-needed:
+The existing HTML/JSON files stay the portable local representation of every
+project, synced or not, and can still be edited outside Novalist. For a
+**synced** project the `Y.Doc` is the authoritative live state and the files are
+its projection; for a **local-only** project the files stay authoritative
+(§5.4).
 
-- **CRDT → disk:** after local or remote changes, the bridge writes the affected
-  file (debounced, ~500 ms), using Novalist's existing serializers so files look
-  exactly as they do today. It records the hash of what it wrote.
-- **Disk → CRDT:** when the existing file watcher reports a change whose hash is
-  _not_ one the bridge just wrote (an outside edit, a `git pull`, a restored
-  backup), the bridge diffs old vs. new content and applies the difference as
-  CRDT edits: text diff for scenes and Markdown, field diff for JSON.
-  Deleted/added files become structure or manifest changes.
+The work is split along the process boundary:
+
+- **Yjs host** projects a `Y.Doc` to HTML/JSON, and imports HTML/JSON into a
+  `Y.Doc` or diffs it against one. Only the side that holds the CRDT can do
+  either.
+- **.NET** writes and reads the files through Novalist's existing services, so
+  files look exactly as they do today, and owns the file watcher.
+
+Directions:
+
+- **Yjs → disk:** after local or remote changes, the Yjs host projects the
+  affected item (debounced, ~500 ms) and .NET writes it. .NET records the hash
+  of what it wrote.
+- **Disk → Yjs:** when the file watcher reports a change whose hash is _not_ one
+  it just wrote (an outside edit, a `git pull`, a cloud folder sync), .NET hands
+  the new content to the Yjs host, which diffs it against the current projection
+  and applies the difference as Yjs operations: a text diff per block for
+  scenes and Markdown, a field diff for JSON. Deleted/added files become
+  structure or manifest changes.
+- **When a diff cannot be applied reliably** (for example a block structure the
+  importer does not recognise, or a file that changed beyond recognition), the
+  file is **not** merged. Both versions are kept (the outside version as a
+  conflict copy) and the user resolves it explicitly. Collaborative state is
+  never silently overwritten.
 - **Echo suppression** by content hash prevents write → watcher → re-apply
   loops.
+- **Snapshots, backups and restore** in a synced project are applied as an
+  outside edit (a diff into the existing `Y.Doc`), never by replacing the
+  `Y.Doc`. That keeps item identities and the CRDT history, and does not wipe
+  collaborators' concurrent changes.
+- A synced document is **never rebuilt from HTML alone**. That would lose its
+  CRDT history and identities; the durable Yjs state (§5.5) is what it is
+  loaded from.
 
 ### 5.3 Editor binding
 
-The renderer keeps working on HTML. The binding is a thin protocol over
-JSON-RPC:
+The existing editor stays. There is no move to ProseMirror, Tiptap or another
+editor framework. A custom **`NovalistYjsBinding`** in the editor iframe connects
+it to the scene's `Y.XmlFragment` in the Yjs host.
 
-- **Local edits:** the editor sends small change notifications (changed
-  block(s) + selection) as you type, batched every ~100 ms. The backend diffs
-  them against the scene's Y.XmlFragment and applies minimal CRDT operations.
-- **Remote edits:** the backend sends block-level patches (insert / replace /
-  delete block N) to the renderer, which applies them without re-rendering the
-  whole scene.
+**Schema first.** The binding needs an explicit model of what a scene is:
+block types and paragraph styles, lists, inline marks (bold, italic, underline
+…), comments, footnotes, suggestions, mentions, images. That schema defines the
+`Y.XmlFragment` shape and is the contract between importer, projection and
+binding (§12).
+
+- **Local edits.** `beforeinput` / `input` and the editor's own operations
+  (formatting, paste, dictation, suggestions) only tell the binding **which
+  blocks changed**. It then reads those blocks' **content in schema form**, the
+  same cleaned form the editor already produces for saving, and diffs it against
+  the `Y.XmlFragment` into fine-grained Yjs operations in one transaction with
+  the binding as origin. A `MutationObserver` is never the source of CRDT
+  operations: the editor rewrites its DOM for presentation too.
+- **Presentation is not content.** Grammar highlights, pagination wrappers,
+  display URLs, selection and focus styling are a separate layer that the
+  schema form leaves out, so they can never become collaborative edits.
+- **IME and dictation.** No operations are generated during composition; the
+  affected block is reconciled once composition ends.
+- **Remote edits.** Yjs change events become **precise DOM patches** of the
+  affected blocks. The editor's HTML is never replaced wholesale while the user
+  is editing, and the local selection is kept through the patch.
+- **Undo** uses `Y.UndoManager`, tracking only the binding's own origin, so undo
+  never removes a collaborator's edits.
 - **Cursors** are exchanged as Yjs _relative positions_, so the local caret and
   remote cursors stay attached to the right character while text around them
   changes.
 
-This binding is the largest piece of new work, because Novalist's editor has no
-existing CRDT integration.
+The same binding runs for local-only and synced projects; only persistence
+differs (§5.4). It does not ship until it has been validated under concurrent
+edits (§14); until then the current editor path stays the production default.
+
+This binding is the largest and riskiest piece of new work, because Novalist's
+editor has no existing document model or CRDT integration.
+
+### 5.4 Sync modes
+
+| Mode                       | Behavior                                                                 | Authoritative state        |
+| -------------------------- | ------------------------------------------------------------------------ | -------------------------- |
+| **Local-only** (default)   | No server, account, keys or network. Works exactly as before.             | HTML/JSON files            |
+| **Synced, online**         | Real-time E2EE collaboration through SignalR                             | Durable Yjs state (§5.5)   |
+| **Synced, offline/paused** | Editing continues locally; queued updates go out when connected again    | Durable Yjs state (§5.5)   |
+
+- **Local-only:** the Yjs host may build an in-memory `Y.Doc` from the files when
+  a scene is opened, and saves go to the files through the existing save path
+  and its conflict protections. Nothing is stored in the sync database.
+- **Synced:** every edit is durably stored and queued before it counts as saved
+  (§5.5). A synced project that is offline, paused or whose server is unreachable
+  **stays synced**; it never silently becomes local-only.
+
+User actions, deliberately separate (no single on/off toggle that could discard
+unsynchronized changes):
+
+- **Enable sync** turns a local-only project into a synced one (§8.1).
+- **Pause sync** stops network traffic. Project association, keys and the
+  outgoing queue are kept, and editing continues.
+- **Resume sync** reconnects, sends the queue and catches up.
+- **Make local copy** creates a separate local-only project from the current
+  state. It gets new identities and no sync association, so nothing done to the
+  copy reaches the shared original.
+
+### 5.5 Durability
+
+For synced projects, `Novalist.Sync.Client` keeps a SQLite database in the
+app-data directory (never in the project folder, like the keys, §6.2):
+
+- **Local update log:** every Yjs update of every item, local or remote, plus
+  periodic compacted states (`Y.encodeStateAsUpdate` from the Yjs host), so an
+  item can be reloaded without the server and without the HTML.
+- **Outgoing queue:** local updates not yet acknowledged by the server, with
+  their `senderSeq`.
+- **Sync state:** `lastServerSeq` per project, epoch, connection settings.
+
+A local edit is **safely saved** once .NET has written it to the local update
+log **and** the outgoing queue **in one transaction** and acknowledged that to
+the Yjs host. Network delivery is tracked separately: an update leaves the queue
+only when the server has assigned it a `serverSeq`. Incoming updates are written
+to the local log before `lastServerSeq` advances. After a crash or restart, the
+Yjs host reloads every item from this log and re-projects it, and the queue is
+sent as soon as sync is online.
+
+The local log holds plaintext Yjs updates, at the same protection level as the
+project files themselves.
 
 ## 6. Cryptography
 
@@ -295,6 +445,11 @@ Encoding rules:
   length, and rejects unsupported versions instead of parsing them with the
   current layout.
 
+`payload` is a binary **Yjs update** for `update` messages, an encoded Yjs state
+(`Y.encodeStateAsUpdate`) for `snapshot` messages, and an encoded cursor and
+selection state for `presence`. The server cannot tell them apart beyond
+`msgType`.
+
 ```
 nonce      = random(24)
 ciphertext = XChaCha20Poly1305.Encrypt(K_type, nonce, payload, aad = header)
@@ -304,20 +459,35 @@ envelope   = { header, nonce, ciphertext, signature }
 
 ## 8. Protocol flows
 
-### 8.1 Sharing an existing local project
+### 8.1 Enabling sync for an existing local project
 
-1. Client generates `projectId`, `EK_0`, and `itemId`s for every scene, Codex
-   file and asset.
-2. Builds CRDT docs from the existing files via the FileBridge (§5.2); uploads
-   assets as blobs (§9).
-3. Wraps `EK_0` for the user's own devices and recovery device; uploads wrapped
-   keys and an initial snapshot of every item.
+1. The client generates `projectId`, `EK_0`, and `itemId`s for every scene,
+   Codex file and asset.
+2. The Yjs host imports every item from the existing files (§5.2). **Before
+   anything is uploaded**, it projects each new `Y.Doc` back to HTML/JSON and
+   compares the result with the original file. Any difference aborts enabling
+   sync and leaves the project untouched, so enabling sync can never change
+   content.
+3. .NET stores the initial states durably (§5.5), uploads assets as blobs (§9),
+   wraps `EK_0` for the user's own devices and recovery device, and uploads the
+   wrapped keys and an initial snapshot of every item.
+
+The project files are not rewritten in the process.
 
 ### 8.2 Sending an edit
 
-The editor binding or FileBridge produces a YDotNet update for one item. The
-client seals it (§7) with `K_update`, increments its `senderSeq`, and pushes it.
-The server checks membership, assigns `serverSeq`, stores, broadcasts.
+1. The editor binding or the file bridge produces a Yjs update for one item in
+   the Yjs host.
+2. The Yjs host sends it to .NET, which stores it in the local log and the
+   outgoing queue in one transaction (§5.5) and acknowledges: the edit is saved.
+3. When sync is online, the client seals it (§7) with `K_update`, increments its
+   `senderSeq`, and pushes it. The server checks membership, assigns
+   `serverSeq`, stores, broadcasts. Once `Push` returns, the update leaves the
+   queue.
+
+Yjs updates merge in any order, so the server's ordering is not needed for
+correctness. `serverSeq` is still what makes delivery durable: acknowledgements,
+deduplication of retries (`senderSeq`) and catch-up all depend on it.
 
 ### 8.3 Receiving an edit
 
@@ -325,16 +495,19 @@ The server checks membership, assigns `serverSeq`, stores, broadcasts.
 2. Verify the signature; **reject before decrypting** if invalid.
 3. Check the epoch key is available.
 4. Decrypt; reject on failure.
-5. Apply to the item's YDotNet doc inside try/catch (a malformed update must not
-   crash Novalist).
-6. FileBridge writes the file; the renderer gets a patch if the scene is open.
+5. Store the plaintext update in the local log (§5.5), then advance
+   `lastServerSeq`.
+6. Hand it to the Yjs host, which applies it to the item's `Y.Doc` inside
+   try/catch (a malformed update must not crash Novalist), projects the item to
+   disk, and patches the editor if the scene is open.
 
 ### 8.4 Catch-up, snapshots and retention
 
 - On connect: `CatchUp(projectId, lastServerSeq)`, process as in §8.3.
 - A client creates a snapshot of an item **every 500 updates to that item, or
-  when the project is closed**. It is sealed with `K_snapshot` and uploaded with
-  `coversServerSeq = N`.
+  when the project is closed**: the Yjs host encodes the state
+  (`Y.encodeStateAsUpdate`), and .NET seals it with `K_snapshot` and uploads it
+  with `coversServerSeq = N`.
 - Updates to that item with `serverSeq <= N` that are covered by a retained
   snapshot are deleted.
 - **Tiered retention** (enforced by the server, which only needs timestamps):
@@ -369,8 +542,22 @@ remember verified keys and **warn loudly** when a known user's keys change.
 
 ### 8.8 Presence
 
-Cursors, selections and "is in scene X" are sealed with `K_presence`, broadcast,
-never stored.
+Cursors, selections and "is in scene X" are encoded by the Yjs host (relative
+positions), sealed with `K_presence` by .NET, broadcast, never stored.
+
+### 8.9 Pausing and resuming
+
+- **Pause:** .NET closes the SignalR connection and stops sending. The project
+  stays synced; edits keep being stored and queued (§5.5).
+- **Resume:** .NET reconnects, joins the project, catches up from
+  `lastServerSeq` and sends the queue in `senderSeq` order. Retries are safe:
+  the server returns the stored `serverSeq` for a repeated `senderSeq`.
+
+### 8.10 Making a local copy
+
+The Yjs host projects the current state of every item into a new project
+folder. The copy gets new identities and no sync association, keys or queue; it
+is an ordinary local-only project. The shared original is not touched.
 
 ## 9. Blobs (images, research files, other assets)
 
@@ -468,7 +655,7 @@ Roles per membership:
 | --- | ----------------------- | ---------------------------------------------------------------------------------------------- |
 | D1  | Repository layout       | Two repos: Novalist fork (incl. Sync.Client) + novalist-sync-server (incl. Contracts as NuGet) |
 | D2  | Integration             | Fork Novalist, keep changes small, offer upstream as PR                                        |
-| D3  | Where CRDT + crypto run | All in the .NET backend (YDotNet, NSec, SignalR); renderer gets no keys                        |
+| D3  | Where CRDT + crypto run | _Revised 2026-10-19:_ CRDT in JavaScript (Yjs, §4.3); crypto, keys, SignalR in .NET. No YDotNet. Renderer and Yjs host get no keys. (Was: all in .NET with YDotNet.) |
 | D4  | Sync scope              | Whole project: scenes live, Codex/metadata as CRDT maps, files as encrypted blobs              |
 | D5  | History for new members | Full history by default (all epoch keys wrapped)                                               |
 | D6  | Recovery                | Recovery key in v1, implemented as a derived recovery device                                   |
@@ -477,22 +664,35 @@ Roles per membership:
 | D9  | Snapshot trigger        | Every 500 updates per item, or on project close                                                |
 | D10 | Forward secrecy         | Not in v1 (rationale §1); rotation + compaction instead                                        |
 | D11 | Login                   | External OIDC provider (Keycloak, authentik); users identified by issuer + subject (§10.1)     |
+| D12 | Sync is optional        | Per project, off by default; local-only projects need no account, server or network (§5.4)    |
+| D13 | Editor                  | Keep the existing editor with a custom `NovalistYjsBinding`; no ProseMirror/Tiptap rewrite    |
+| D14 | Where Yjs runs          | `YjsDocumentManager` in an Electron `utilityProcess`, independent of windows and iframes       |
+| D15 | Durability              | Durable Yjs log + outgoing queue in the .NET client's SQLite; saved = stored in one transaction |
+| D16 | Synced project state    | `Y.Doc` is authoritative, files are its projection; never rebuilt from HTML alone (§5.2)      |
+| D17 | Server-side CRDT        | None: no Hocuspocus, no Node.js server, no server-side merging                                 |
 
 ## 12. Open questions
 
 - [ ] **Git coexistence:** a `git pull` on a synced project arrives as outside
-      file changes and is merged into the CRDT. Is that wanted, or should Git be
-      discouraged / disabled for synced projects?
+      file changes and is merged into the CRDT (§5.2). Is that wanted, or should
+      Git be discouraged / disabled for synced projects?
 - [ ] Should the server verify Ed25519 signatures (public keys only) to drop
       spam from non-member devices early?
-- [ ] Exact Y.XmlFragment schema for the scene editor's block and inline formats
-      (needs a read of the editor and sanitizer code).
+- [ ] **Editor schema** (first task of phase 2): exact block types, paragraph
+      styles, inline marks, and how comments, footnotes, suggestions, mentions
+      and images are represented in the `Y.XmlFragment` (needs a read of the
+      editor, sanitizer and `scene-html.js`).
+- [ ] **Codex sections** use CodeMirror: bind them with the established
+      `y-codemirror.next` binding, or treat them as plain `Y.Text` diffs like
+      outside edits?
+- [ ] **Conflict resolution UI** for outside changes that cannot be merged
+      (§5.2): how conflict copies are named and shown.
 - [ ] Mobile (`Novalist.Mobile`) support later?
 - [ ] **Device authentication:** OIDC only proves the user. A stolen device with
       a valid session could claim another device ID of the same user, so
       revoking it would not lock it out. Devices should prove possession of
       their Ed25519 key (server challenge, signature verified against the stored
-      public key, rule 7) before build step 6 is done. Consider deriving
+      public key, rule 7) before identity keys ship (phase 4). Consider deriving
       `deviceId` from the Ed25519 public key (e.g. the first 16 bytes of its
       SHA-256). That binds the ID to one key, so it cannot be registered with
       a different key, but it does not prove possession: anyone can hash a
@@ -520,15 +720,61 @@ Roles per membership:
 
 ## 14. Build order
 
-1. **Server skeleton + Contracts:** hub, auth, PostgreSQL log, catch-up.
-   Plaintext for now.
-2. **Sync.Client with YDotNet, plaintext:** two Novalist instances syncing one
-   scene's text through the server. Test: concurrent edits converge.
-3. **FileBridge:** CRDT ⇄ scene HTML, echo suppression, outside edits.
-4. **Editor binding:** live typing, remote patches, cursors.
-5. **Encryption:** single epoch key, sealed envelopes.
-6. **Identity keys, wrapping, signatures, membership, safety numbers.**
-7. **Whole project:** structure doc, Codex maps, file manifest + blobs.
-8. **Snapshots, compaction, tiered retention.**
-9. **Epochs:** removal, revocation, monthly rotation.
-10. **Recovery key, device linking.**
+Done: **server skeleton + Contracts** (hub, OIDC login, membership, PostgreSQL
+log, catch-up, revocation on open connections). Plaintext payloads for now; the
+server treats them as opaque either way.
+
+The client is built incrementally. At every step the existing standalone
+application keeps working, and the current editor path stays the production
+default until the binding is validated.
+
+1. **CRDT foundation.** Add Yjs and the Yjs host (`utilityProcess`) with
+   `YjsDocumentManager`. Import and project basic scene content (HTML ⇄
+   `Y.XmlFragment`) and check that the round trip keeps existing scenes
+   unchanged. No editor or sync changes yet.
+2. **Editor integration.** Define the editor schema (§12). Build
+   `NovalistYjsBinding`: precise text operations, paragraphs, formatting,
+   collaborative undo, cursors. Prove that concurrent edits converge.
+3. **Complex features.** Adapt suggestions, comments, footnotes, mentions and
+   dictation. Separate grammar highlighting and pagination from document
+   content. Keep the current editor UI and formatting behavior.
+4. **Persistence and synchronization.**
+   1. Durable local Yjs log and outgoing queue in the .NET client (§5.5).
+   2. Plaintext sync through the existing server: offline edits, reconnect,
+      catch-up, pause/resume.
+   3. Enable sync and make local copy (§8.1, §8.10).
+   4. Encryption with a single epoch key, sealed envelopes.
+   5. Identity keys, device authentication, wrapping, signatures, membership,
+      safety numbers.
+   6. Whole project: structure doc, Codex, file manifest + blobs.
+   7. Snapshots, compaction, tiered retention.
+   8. Epochs: removal, revocation, monthly rotation.
+   9. Recovery key, device linking.
+5. **Stabilization.** Regression tests against existing projects and editor
+   behavior; crash recovery, offline editing and concurrent modification tests;
+   verification that enabling sync never changes content.
+
+### 14.1 Acceptance tests
+
+The client is done when it demonstrates all of these:
+
+1. An existing Novalist project opens and works without synchronization.
+2. Local-only editing needs no account or network connection.
+3. Existing HTML/JSON projects keep their content and supported formatting.
+4. Two clients can insert and delete text concurrently without losing edits.
+5. Updates converge regardless of delivery order.
+6. Offline changes merge correctly after reconnecting.
+7. Restarting Novalist keeps every durably saved but unsynchronized change.
+8. Undo never removes another collaborator's edits.
+9. Comments, suggestions, formatting and cursor positions stay consistent under
+   concurrent changes.
+10. Grammar highlighting and pagination never produce CRDT updates.
+11. Outside filesystem changes never silently destroy synchronized content.
+12. The server never receives plaintext or keys.
+13. Pause/resume never discards queued updates.
+14. A local copy does not affect the shared original.
+15. Existing non-sync editor behavior keeps working throughout the migration.
+
+Tests 4, 5, 8 and 9 are backed by randomized convergence tests: several Yjs
+documents, random concurrent edits through the binding, delivery in random
+order, all documents and projections identical at the end.
