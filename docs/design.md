@@ -562,6 +562,13 @@ remember verified keys and **warn loudly** when a known user's keys change.
 Cursors, selections and "is in scene X" are encoded by the Yjs host (relative
 positions), sealed with `K_presence` by .NET, broadcast, never stored.
 
+`PublishPresence(Envelope)` relays to other connected project members through
+`ReceivePresence`. It checks the active device, current membership and epoch,
+message type, sender identity and envelope sizes. The ciphertext is limited
+to 4096 bytes. Presence never increments `serverSeq` or appears in catch-up.
+Clients throttle outgoing updates, reject stale/replayed presence and expire
+inactive cursors locally. The server does not interpret the encrypted state.
+
 ### 8.9 Pausing and resuming
 
 - **Pause:** .NET closes the SignalR connection and stops sending. The project

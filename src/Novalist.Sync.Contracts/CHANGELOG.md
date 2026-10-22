@@ -14,6 +14,8 @@ the minor version.
   `RedeemInvitation` and `InvitationGrant` records. Creation and revocation
   use `/projects/{projectId}/invitations` and its `/revoke` endpoint;
   claiming uses `/invitations/redeem`. All three are POST requests.
+- `ISyncHub.PublishPresence` and `ISyncClient.ReceivePresence` relay encrypted
+  presence envelopes without storing them or allocating a server sequence.
 - Package minor version 1.1.0 for these additive APIs; envelope wire version
   remains 1.
 

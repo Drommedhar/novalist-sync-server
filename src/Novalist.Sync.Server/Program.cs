@@ -17,6 +17,7 @@ builder.Services.AddDbContext<SyncDbContext>(options => options
     .UseSnakeCaseNamingConvention());
 
 builder.Services.AddScoped<UpdateLog>();
+builder.Services.AddScoped<PresenceAccess>();
 
 builder.Services.AddScoped<UserDirectory>();
 builder.Services.AddScoped<DeviceRegistry>();
