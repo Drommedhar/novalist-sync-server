@@ -26,6 +26,7 @@ public sealed class SyncServer(DatabaseFixture database, TimeProvider? clock = n
     {
         if (clock is not null) builder.ConfigureTestServices(services => services.AddSingleton(clock));
         if (commands is not null) builder.ConfigureTestServices(services => services.AddDbContext<SyncDbContext>(options => options.AddInterceptors(commands)));
+        builder.UseSetting("Relay:Enabled", "false");
         builder.UseSetting("ConnectionStrings:Default", database.ConnectionString);
         builder.UseSetting("Collaboration:ServerUrl", PublicUrl);
 

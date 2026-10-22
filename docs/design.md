@@ -843,6 +843,14 @@ Roles per membership:
       updates from viewer devices too, which needs a member/role list the server
       cannot forge (e.g. signed by an owner).
 
+## Relay-only desktop integration
+
+The Novalist desktop integration now uses the live packet relay described in
+[relay.md](relay.md). This is the default mode and supersedes this document's
+storage and offline-joining design for that integration. It maps no persistence
+endpoints and requires no database. The preceding design remains documentation
+for the explicitly enabled legacy persistence mode (`Relay:Enabled=false`).
+
 ## 13. Future work
 
 - MLS (RFC 9420) for forward secrecy and post-compromise security of key

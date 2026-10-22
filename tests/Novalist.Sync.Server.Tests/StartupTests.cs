@@ -54,6 +54,7 @@ public class StartupTests(DatabaseFixture database)
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Production");
+            builder.UseSetting("Relay:Enabled", "false");
             builder.UseSetting("ConnectionStrings:Default", database.ConnectionString);
             // Omit missing settings: a null indexed entry still creates an audience
             // child, which JWT configuration binds as an empty audience value.
