@@ -684,6 +684,15 @@ their original sequence. A lost connection leaves a bounded lease, and a new
 epoch invalidates old leases. This supplements encrypted document merging; the
 server does not interpret field values or enforce their internal schema.
 
+`PushGuardedFieldEdit` additionally requires a second live lease owned by the
+same authenticated device in the same project and epoch. Both leases are checked
+inside the transaction that allocates the update sequence. This fences dependent
+edits if a client pauses until its coordinating lease expires. The server learns
+that two opaque resources participate in one change, without their names or
+values. Identical confirmed retries remain idempotent. Clients use this distinct
+method so servers that lack support reject the operation rather than ignore its
+precondition.
+
 Device authentication adds immutable 32-byte Ed25519 and X25519 public keys to
 device records, plus the linking device ID and its public signature when linked.
 `GET /devices/registration` returns the authenticated account's internal user

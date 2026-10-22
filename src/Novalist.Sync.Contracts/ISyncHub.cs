@@ -17,6 +17,7 @@ public interface ISyncHub
     Task<FieldLeaseGrant?> RenewFieldLease(FieldLeaseRequest request);
     Task<bool> ReleaseFieldLease(FieldLeaseRequest request);
     Task<long> PushFieldEdit(FieldLeaseRequest request, Envelope envelope);
+    Task<long> PushGuardedFieldEdit(FieldLeaseRequest request, FieldLeaseRequest required, Envelope envelope);
     Task<DeviceConnectionChallenge> GetDeviceChallenge();
     Task AuthenticateDevice(byte[] signature);
     Task CreateInvitation(Guid projectId, CreateInvitation request);

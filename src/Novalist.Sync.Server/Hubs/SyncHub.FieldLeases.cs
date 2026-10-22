@@ -29,4 +29,12 @@ public sealed partial class SyncHub
         await Clients.OthersInGroup(ProjectGroup(request.ProjectId)).ReceiveUpdate(new SequencedEnvelope(sequence, envelope));
         return sequence;
     }
+
+    public async Task<long> PushGuardedFieldEdit(FieldLeaseRequest request, FieldLeaseRequest required, Envelope envelope)
+    {
+        await EnsureDeviceActiveAsync(Context.ConnectionAborted);
+        var sequence = await fieldLeases.PushGuardedAsync(UserId, DeviceId, request, required, envelope, Context.ConnectionAborted);
+        await Clients.OthersInGroup(ProjectGroup(request.ProjectId)).ReceiveUpdate(new SequencedEnvelope(sequence, envelope));
+        return sequence;
+    }
 }

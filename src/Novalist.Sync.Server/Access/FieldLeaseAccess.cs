@@ -53,6 +53,17 @@ public sealed class FieldLeaseAccess(SyncDbContext db, DeviceRegistry devices, U
         }, ct);
 
     public Task<long> PushAsync(Guid userId, Guid deviceId, FieldLeaseRequest request, Envelope envelope, CancellationToken ct)
+        => PushCoreAsync(userId, deviceId, request, null, envelope, ct);
+
+    public Task<long> PushGuardedAsync(Guid userId, Guid deviceId, FieldLeaseRequest request, FieldLeaseRequest required, Envelope envelope, CancellationToken ct)
+    {
+        if (required.ProjectId != request.ProjectId || required.Epoch != request.Epoch || required.ResourceId == Guid.Empty ||
+            required.ResourceId == request.ResourceId || required.LeaseId == Guid.Empty)
+            throw new PushRejectedException("The required editing lease does not belong to this change.");
+        return PushCoreAsync(userId, deviceId, request, required, envelope, ct);
+    }
+
+    private Task<long> PushCoreAsync(Guid userId, Guid deviceId, FieldLeaseRequest request, FieldLeaseRequest? required, Envelope envelope, CancellationToken ct)
     {
         var header = EnvelopeHeader.Parse(envelope.Header);
         if (header.ProjectId != request.ProjectId || header.SenderDeviceId != deviceId || header.Epoch != request.Epoch ||
@@ -64,6 +75,8 @@ public sealed class FieldLeaseAccess(SyncDbContext db, DeviceRegistry devices, U
             if (previous is { } sequence) return sequence;
             if (!Owns(await ReadAsync(request, ct), deviceId, request, now))
                 throw new ConflictException("This field's editing lease has expired or changed.");
+            if (required is not null && !Owns(await ReadAsync(required, ct), deviceId, required, now))
+                throw new ConflictException("The required editing lease has expired or changed.");
             return await updates.AppendAsync(userId, envelope, ct);
         }, ct);
     }

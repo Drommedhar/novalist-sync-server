@@ -13,6 +13,31 @@ public sealed class FieldLeaseTests(DatabaseFixture database)
     private sealed record Writer(Guid User, Guid Device);
 
     [Fact]
+    public async Task GuardedEditsFenceExpiredGraphLeasesAndKeepConfirmedRetriesIdempotent()
+    {
+        var first = await WriterAsync();
+        var second = await WriterAsync();
+        var project = await database.CreateProjectAsync((first.User, MembershipRole.Owner), (second.User, MembershipRole.Contributor));
+        var field = new FieldLeaseRequest(project, Guid.NewGuid(), 0, Guid.NewGuid());
+        var graph = field with { ResourceId = Guid.NewGuid(), LeaseId = Guid.NewGuid() };
+        await AcquireAsync(first, field);
+        await AcquireAsync(first, graph);
+        await using var db = database.CreateContext();
+        var service = Service(db);
+        var edit = TestData.Envelope(project, first.Device, 1);
+        Assert.Equal(1, await service.PushGuardedAsync(first.User, first.Device, field, graph, edit, Ct));
+        await db.FieldLeases.Where(lease => lease.ProjectId == project && lease.ResourceId == graph.ResourceId)
+            .ExecuteUpdateAsync(set => set.SetProperty(lease => lease.ExpiresAt, DateTimeOffset.UnixEpoch), Ct);
+        var successor = graph with { LeaseId = Guid.NewGuid() };
+        Assert.Equal(second.Device, (await AcquireAsync(second, successor)).DeviceId);
+        Assert.NotNull(await service.RenewAsync(first.User, first.Device, field, Ct));
+        await Assert.ThrowsAsync<ConflictException>(() => service.PushGuardedAsync(first.User, first.Device, field, graph, TestData.Envelope(project, first.Device, 2), Ct));
+        await Assert.ThrowsAsync<ConflictException>(() => service.PushGuardedAsync(first.User, first.Device, field, successor, TestData.Envelope(project, first.Device, 2), Ct));
+        Assert.Equal(1, await service.PushGuardedAsync(first.User, first.Device, field, graph, edit, Ct));
+        Assert.Single(await db.Updates.Where(update => update.ProjectId == project).ToListAsync(Ct));
+    }
+
+    [Fact]
     public async Task SimultaneousFocusGrantsOneWriterAndIndependentFieldsRemainAvailable()
     {
         var first = await WriterAsync();

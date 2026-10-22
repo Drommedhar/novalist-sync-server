@@ -10,6 +10,12 @@ the minor version.
 
 ### Added
 
+- `PushGuardedFieldEdit` atomically requires both the focused field lease and a
+  second opaque resource lease in the same project and epoch. Expired guards
+  cannot commit delayed edits; acknowledged retries keep their original sequence.
+  The server learns which two opaque resources participate in the same change.
+  Package minor 1.6.0; earlier servers fail closed because the method is absent.
+
 - Verified-device certificates and staged project epoch transitions. `BeginProjectEpoch`,
   `StageProjectEpoch`, `StageProjectEpochGrant`, and `CommitProjectEpoch` publish a
   fresh encrypted checkpoint, remove membership and retire invitations atomically,
