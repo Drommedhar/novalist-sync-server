@@ -1,0 +1,79 @@
+using Microsoft.EntityFrameworkCore;
+using Novalist.Sync.Contracts;
+using Novalist.Sync.Server.Data;
+using Npgsql;
+
+namespace Novalist.Sync.Server.Access;
+
+public sealed class InvitationAccess(SyncDbContext db, ProjectAccess projects, TimeProvider clock)
+{
+    public async Task CreateAsync(Guid ownerId, Guid projectId, CreateInvitation request, CancellationToken ct)
+    {
+        await projects.EnsureIsOwnerAsync(ownerId, projectId, ct);
+        var now = clock.GetUtcNow();
+        if (request.InvitationId == Guid.Empty || request.ExpiresAt <= now || request.ExpiresAt > now.AddDays(7))
+            throw new ArgumentException("An invitation needs a random identifier and an expiry within seven days.");
+        var expiresAt = new DateTimeOffset(request.ExpiresAt.UtcTicks / 10 * 10, TimeSpan.Zero);
+
+        db.Invitations.Add(new Invitation
+        {
+            Id = request.InvitationId,
+            ProjectId = projectId,
+            ExpiresAt = expiresAt
+        });
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException
+        { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: "pk_invitations" })
+        {
+            db.ChangeTracker.Clear();
+            var previous = await db.Invitations.FindAsync([request.InvitationId], ct);
+            if (previous?.ProjectId != projectId || previous.ExpiresAt != expiresAt)
+                throw new ConflictException("The invitation identifier is already in use.");
+        }
+    }
+
+    public async Task<InvitationGrant> RedeemAsync(Guid userId, Guid invitationId, CancellationToken ct)
+    {
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        var rows = await db.Invitations.FromSqlInterpolated(
+            $"SELECT * FROM invitations WHERE id = {invitationId} FOR UPDATE").ToListAsync(ct);
+        var invitation = rows.SingleOrDefault();
+        if (invitation is null || invitation.ExpiresAt <= clock.GetUtcNow() ||
+            (invitation.RedeemedBy is { } claimant && claimant != userId))
+            throw new AccessDeniedException("This invitation is unavailable.");
+
+        var membership = await db.Memberships.FindAsync([invitation.ProjectId, userId], ct);
+        if (invitation.RedeemedBy is not null && membership is null)
+            throw new AccessDeniedException("This invitation is unavailable.");
+        if (invitation.RedeemedBy is null)
+        {
+            var contributor = (int)MembershipRole.Contributor;
+            var viewer = (int)MembershipRole.Viewer;
+            await db.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO memberships (project_id, user_id, role)
+                VALUES ({invitation.ProjectId}, {userId}, {contributor})
+                ON CONFLICT (project_id, user_id) DO UPDATE SET role = {contributor}
+                WHERE memberships.role = {viewer}
+                """, ct);
+        }
+        invitation.RedeemedBy = userId;
+        await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+        return new InvitationGrant(invitation.ProjectId);
+    }
+
+    public async Task RevokeAsync(Guid ownerId, Guid projectId, Guid invitationId, CancellationToken ct)
+    {
+        await projects.EnsureIsOwnerAsync(ownerId, projectId, ct);
+        if (invitationId == Guid.Empty) throw new ArgumentException("An invitation identifier is required.");
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO invitations (id, project_id, expires_at)
+            VALUES ({invitationId}, {projectId}, {DateTimeOffset.UnixEpoch})
+            ON CONFLICT (id) DO UPDATE SET expires_at = {DateTimeOffset.UnixEpoch}
+            WHERE invitations.project_id = {projectId}
+            """, ct);
+    }
+}

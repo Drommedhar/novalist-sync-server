@@ -524,6 +524,23 @@ deduplication of retries (`senderSeq`) and catch-up all depend on it.
    — new members see full history by default.
 4. Server records membership.
 
+The implemented membership API also supports a single-use invitation link.
+An owner POSTs `CreateInvitation` to `/projects/{projectId}/invitations`, with
+a client-generated, cryptographically random UUID and an expiry no more than
+seven days away. A signed-in recipient POSTs `RedeemInvitation` to
+`/invitations/redeem`. The first account to claim it becomes a contributor;
+concurrent claims by other accounts fail. The same account can retry while
+the invitation is valid and its membership still exists. An owner can POST
+the identifier to `/projects/{projectId}/invitations/revoke` to invalidate it.
+Revocation does not remove an already admitted member; membership removal
+is a separate operation. Revoked identifiers cannot be reused.
+
+Invitation identifiers are bearer capabilities. Send them in authenticated
+request bodies, never in HTTP URLs or logs. Clients must keep the link's
+encryption material separate: these endpoints grant server access only and
+do not implement device verification, epoch-key distribution or rotation.
+The §8.5 key-distribution requirements still apply before editing.
+
 ### 8.6 Key verification
 
 ```
@@ -615,6 +632,11 @@ MIME types and keys are only visible inside the encrypted manifest.
 
 Visible metadata: project and item counts, member lists, devices, timestamps,
 edit frequency per item, sizes.
+
+The invitation API additionally stores invitation identifiers, project IDs,
+expiry times and the claiming account ID. No project keys, names, paths or
+content are part of invitation requests or responses. Invitation identifiers
+are access capabilities and must not be included in diagnostics.
 
 Project names, item names and paths are **not** stored in `projects` or anywhere
 else on the server; they live in the encrypted structure doc (§5.1).

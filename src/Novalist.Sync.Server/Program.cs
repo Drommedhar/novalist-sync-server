@@ -21,6 +21,8 @@ builder.Services.AddScoped<UpdateLog>();
 builder.Services.AddScoped<UserDirectory>();
 builder.Services.AddScoped<DeviceRegistry>();
 builder.Services.AddScoped<ProjectAccess>();
+builder.Services.AddScoped<InvitationAccess>();
+builder.Services.AddSingleton(TimeProvider.System);
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -56,5 +58,6 @@ app.UseAuthorization();
 
 app.MapHub<SyncHub>(Protocol.HubPath);
 app.MapDeviceEndpoints();
+app.MapInvitationEndpoints();
 
 app.Run();

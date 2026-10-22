@@ -14,12 +14,13 @@ namespace Novalist.Sync.Server.Tests.Infrastructure;
 
 // The real server (Program.cs) in memory, pointed at the test database and
 // configured to trust TestTokens instead of an external identity provider.
-public sealed class SyncServer(DatabaseFixture database) : WebApplicationFactory<Program>
+public sealed class SyncServer(DatabaseFixture database, TimeProvider? clock = null) : WebApplicationFactory<Program>
 {
     public CapturedLogs Logs { get; } = new();
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        if (clock is not null) builder.ConfigureTestServices(services => services.AddSingleton(clock));
         builder.UseSetting("ConnectionStrings:Default", database.ConnectionString);
 
         builder.ConfigureLogging(logging => logging

@@ -10,6 +10,13 @@ the minor version.
 
 ### Added
 
+- Authenticated, owner-created single-use invitations: `CreateInvitation`,
+  `RedeemInvitation` and `InvitationGrant` records. Creation and revocation
+  use `/projects/{projectId}/invitations` and its `/revoke` endpoint;
+  claiming uses `/invitations/redeem`. All three are POST requests.
+- Package minor version 1.1.0 for these additive APIs; envelope wire version
+  remains 1.
+
 - `Protocol.Version` (protocol version 1).
 - `MsgType` enum: `Update = 1`, `Snapshot = 2`, `Presence = 3`.
 - `EnvelopeHeader` record with the 62-byte layout from design.md §7:
