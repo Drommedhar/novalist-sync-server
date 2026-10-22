@@ -23,11 +23,28 @@ public sealed class ConnectionRegistry
         }
     }
 
+    public void AbortUser(Guid userId)
+    {
+        foreach (var connection in _connections.Values.Where(c => c.UserId == userId)) connection.Context.Abort();
+    }
+
     public IReadOnlyList<string> ConnectionIdsOf(Guid userId) =>
         _connections.Values
             .Where(c => c.UserId == userId)
             .Select(c => c.Context.ConnectionId)
             .ToList();
 
-    private sealed record Connection(HubCallerContext Context, Guid UserId, Guid DeviceId);
+    public void RevokeProject(Guid userId, Guid projectId)
+    {
+        foreach (var connection in _connections.Values.Where(value => value.UserId == userId))
+            connection.RevokedProjects.TryAdd(projectId, 0);
+    }
+
+    public bool ProjectRevoked(string connectionId, Guid projectId) =>
+        !_connections.TryGetValue(connectionId, out var connection) || connection.RevokedProjects.ContainsKey(projectId);
+
+    private sealed record Connection(HubCallerContext Context, Guid UserId, Guid DeviceId)
+    {
+        internal ConcurrentDictionary<Guid, byte> RevokedProjects { get; } = new();
+    }
 }

@@ -640,10 +640,86 @@ MIME types and keys are only visible inside the encrypted manifest.
 Visible metadata: project and item counts, member lists, devices, timestamps,
 edit frequency per item, sizes.
 
+Verified owner connections can list project members using `ListProjectMembers`.
+The response contains the existing account UUID, role and username (or verified
+email when no username exists). `RemoveProjectMember` removes access and the
+account's field leases and expires all unused project invitations.
+`DeleteProject` removes memberships, invitations, updates and field lease data;
+the empty project row remains as an identifier tombstone. Both operations remove
+affected connections from live delivery and send `ProjectAccessEnded(projectId)`.
+Registered encrypted projects require `CommitProjectEpoch` for member removal.
+Clients register their public project certificate; contributor registration must
+match the certificate fingerprint atomically bound during invitation activation.
+The server exposes registered certificate bytes and account/device IDs to the
+owner, who validates the device's receiving key against the existing project
+authority before wrapping a new random epoch key.
+
+Epoch transitions stage opaque checkpoint envelopes and individual opaque grants.
+The database atomically compares the previous epoch and last committed sequence,
+assigns checkpoint sequences through the normal log allocator, removes the chosen
+membership, retires all invitations, clears leases and publishes grants only to
+remaining registered devices. Concurrent writing aborts the transaction. Devices
+receive `ProjectEpochChanged` and restart against the owner-signed checkpoint
+boundary. Public metadata adds rotation IDs, device certificates, previous epochs,
+checkpoint boundary sequences, envelope/grant sizes and staging timestamps.
+The server never decrypts grants or checkpoint envelopes; clients verify the
+signature, pinned owner, recipient, monotonic epoch and checkpoint hash.
+
+Field editing adds `field_leases`: project UUID, opaque resource UUID, holder
+device UUID, random lease UUID, epoch and expiry. The resource UUID identifies a
+client-defined field without disclosing its name, path or value. The server learns
+when the same field is focused and by which device. `AcquireFieldLease`,
+`RenewFieldLease` and `ReleaseFieldLease` require current write access and device
+authentication. A grant lasts 30 seconds; renewal requires the same live lease.
+Expired/released focus needs a fresh lease UUID. Acquisition also returns the
+server clock and the project's latest sequence, which the client must catch up
+through before enabling editing. `field_lease_attempts` retains the project/device/
+lease UUIDs for each attempted focus, including denied attempts and releases
+received before acquisition, so delayed requests cannot resurrect an earlier
+focus after intervening leases. A retry of a still-live lease returns its current
+grant. `PushFieldEdit` atomically validates the lease
+and persists an opaque encrypted update. Clients flush before releasing focus;
+late edits after expiry are rejected. Identical already-persisted retries return
+their original sequence. A lost connection leaves a bounded lease, and a new
+epoch invalidates old leases. This supplements encrypted document merging; the
+server does not interpret field values or enforce their internal schema.
+
+Device authentication adds immutable 32-byte Ed25519 and X25519 public keys to
+device records, plus the linking device ID and its public signature when linked.
+`GET /devices/registration` returns the authenticated account's internal user
+UUID and configured canonical server URL. `PUT /devices/verified` receives those public keys, the new device's
+registration signature, and an optional linking device ID/signature. A fresh hub
+challenge contains that user UUID, device UUID, canonical server URL and a random per-connection UUID;
+it is consumed when a proof is attempted and is never logged. The server uses
+NSec only to verify Ed25519 signatures, as permitted by rule 7. No private or
+symmetric key, project title, path or content is added to these APIs.
+
+Registration signs `novalist/v1/device-register || server || userId || deviceId || DSK.public
+|| DXK.public`. Linking signs `novalist/v1/device-link || linkingDeviceId ||
+registrationBytes`. Connection proof signs `novalist/v1/device-connect || server || userId
+|| deviceId || challengeNonce`. UUIDs use RFC 9562 big-endian bytes. Keys are
+32 bytes and signatures 64 bytes. Domain strings are UTF-8 without terminators.
+`server` is a big-endian uint16 byte length followed by the UTF-8 canonical server
+URL, with one trailing slash. Administrators configure `Collaboration__ServerUrl`
+to the public HTTPS base URL (loopback HTTP is allowed for local tests). It is
+never inferred from an untrusted Host header. Clients compare the advertised URL
+with their selected endpoint and sign their own canonical endpoint. This prevents
+a server from relaying a proof to another server accepting the same OIDC token.
+Changing the public endpoint requires clients to select the new canonical URL.
+
 The invitation API additionally stores invitation identifiers, project IDs,
 expiry times and the claiming account ID. No project keys, names, paths or
 content are part of invitation requests or responses. Invitation identifiers
 are access capabilities and must not be included in diagnostics.
+
+The verified `ActivateInvitation` hub operation additionally stores the claiming
+device UUID and an opaque 32-byte certificate fingerprint. It never receives or
+interprets the certificate or private invitation material. Account admission and
+this activation receipt commit together. The same still-active account/device
+can retrieve the same receipt after expiry (including when the original reply
+was lost); changed fingerprints/devices, revoked devices and removed memberships
+are rejected. Revoking a link stops an unclaimed invitation; it does not erase
+an already-committed receipt or remove an existing collaborator.
 
 Project names, item names and paths are **not** stored in `projects` or anywhere
 else on the server; they live in the encrypted structure doc (§5.1).
@@ -655,9 +731,22 @@ stores no passwords. A user is identified by the token's issuer and `sub` claim,
 which never change; email and username are optional, refreshed from the token's
 claims, and only used to find people when inviting them (§8.5).
 
-OIDC authenticates the **user**, not the device. Until devices authenticate with
-their own key (§12), the server only checks that the device ID a connection
-claims belongs to the logged-in user.
+OIDC authenticates the **user**, not the device. Verified devices additionally
+answer a fresh `GetDeviceChallenge` using `AuthenticateDevice` before project,
+update, presence or invitation operations. Public keys cannot be replaced under
+an existing device ID. The first verified registration serializes on the account;
+later devices require a signature from an active verified device of that account.
+Revoked device records still prevent bootstrapping a replacement without linking.
+Registration/linking, revocation, and legacy eligibility checks plus their
+mutations serialize on the same account lock. An already-authorized legacy
+request finishes before verified enrollment can commit; it cannot mutate the
+account after the cutover using an earlier eligibility check.
+
+Legacy clients continue to work for accounts with no verified devices. Registering
+the first verified device opts that account into possession checks and closes its
+existing connections. Legacy device registration, access and invitation HTTP
+endpoints then reject that account. Its invitations use the authenticated hub
+methods instead. This prevents falling back to UUID-only access after revocation.
 
 The server is pointed at the provider through configuration (environment
 variables, never `appsettings*.json`):
@@ -671,6 +760,20 @@ variables, never `appsettings*.json`):
 Outside Development the server refuses to start without both. Access tokens are
 only accepted in the `Authorization` header, never in the URL, so they cannot
 end up in access logs.
+
+For native desktop sign-in, admins additionally configure
+`Authentication__NativeClient__ClientId` and
+`Authentication__NativeClient__Scope` (including `openid` and the provider's
+API scopes; `offline_access` enables refresh tokens where supported). Register
+this as a public native client using authorization code with S256 PKCE and a
+loopback redirect at `http://127.0.0.1:{ephemeral-port}/callback`, following
+RFC 8252. No client secret is shipped with the desktop application.
+
+`GET /client-configuration` publishes only the protocol version, configured
+issuer URL, native client ID and scopes. These are public service configuration,
+not user or project data. The endpoint returns 503 when native sign-in is not
+configured; existing authenticated hub clients remain supported. This endpoint
+does not create an OIDC provider or register the native client in that provider.
 
 Roles per membership:
 

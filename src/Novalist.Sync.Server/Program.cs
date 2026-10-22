@@ -18,10 +18,13 @@ builder.Services.AddDbContext<SyncDbContext>(options => options
 
 builder.Services.AddScoped<UpdateLog>();
 builder.Services.AddScoped<PresenceAccess>();
+builder.Services.AddScoped<FieldLeaseAccess>();
 
 builder.Services.AddScoped<UserDirectory>();
 builder.Services.AddScoped<DeviceRegistry>();
+builder.Services.AddSingleton<DeviceProofServer>();
 builder.Services.AddScoped<ProjectAccess>();
+builder.Services.AddScoped<ProjectEpochAccess>();
 builder.Services.AddScoped<InvitationAccess>();
 builder.Services.AddSingleton(TimeProvider.System);
 
@@ -59,6 +62,8 @@ app.UseAuthorization();
 
 app.MapHub<SyncHub>(Protocol.HubPath);
 app.MapDeviceEndpoints();
+app.MapVerifiedDeviceEndpoints();
 app.MapInvitationEndpoints();
+app.MapNativeClientEndpoint();
 
 app.Run();

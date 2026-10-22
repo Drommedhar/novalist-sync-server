@@ -4,7 +4,7 @@ using Npgsql;
 
 namespace Novalist.Sync.Server.Access;
 
-public sealed class ProjectAccess(SyncDbContext db)
+public sealed partial class ProjectAccess(SyncDbContext db)
 {
     private const string ProjectPrimaryKey = "pk_projects";
 
@@ -67,16 +67,25 @@ public sealed class ProjectAccess(SyncDbContext db)
     public async Task RemoveMemberAsync(Guid ownerId, Guid projectId, Guid memberId,
         CancellationToken cancellationToken)
     {
-        await EnsureIsOwnerAsync(ownerId, projectId, cancellationToken);
-
         if (memberId == ownerId)
         {
             throw new ConflictException($"Cannot remove owner from project {projectId}.");
         }
 
+        await using var transaction = await AccountAccessLock.AcquireAsync(db, memberId, legacyAccount: false, cancellationToken);
+        await EnsureIsOwnerAsync(ownerId, projectId, cancellationToken);
+        if (await db.ProjectDeviceAuthorizations.AnyAsync(value => value.ProjectId == projectId, cancellationToken))
+            throw new ConflictException("Rotate the project encryption keys when removing a registered collaborator.");
+
         await db.Memberships
             .Where(m => m.ProjectId == projectId && m.UserId == memberId)
             .ExecuteDeleteAsync(cancellationToken);
+        await db.Invitations.Where(invitation => invitation.ProjectId == projectId &&
+            (invitation.RedeemedBy == null || invitation.RedeemedBy == memberId))
+            .ExecuteUpdateAsync(set => set.SetProperty(invitation => invitation.ExpiresAt, DateTimeOffset.UnixEpoch), cancellationToken);
+        var deviceIds = db.Devices.Where(device => device.UserId == memberId).Select(device => device.Id);
+        await db.FieldLeases.Where(lease => lease.ProjectId == projectId && deviceIds.Contains(lease.DeviceId)).ExecuteDeleteAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     private Task<MembershipRole?> GetRoleAsync(Guid userId, Guid projectId, CancellationToken cancellationToken) =>

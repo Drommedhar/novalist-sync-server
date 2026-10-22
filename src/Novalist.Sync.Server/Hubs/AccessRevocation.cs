@@ -22,10 +22,30 @@ public sealed class AccessRevocation(
         CancellationToken cancellationToken)
     {
         await projects.RemoveMemberAsync(ownerId, projectId, memberId, cancellationToken);
+        await NotifyRemovedAsync(projectId, memberId, cancellationToken);
+    }
 
+    public async Task NotifyRemovedAsync(Guid projectId, Guid memberId, CancellationToken cancellationToken)
+    {
+        connections.RevokeProject(memberId, projectId);
         foreach (var connectionId in connections.ConnectionIdsOf(memberId))
         {
             await hub.Groups.RemoveFromGroupAsync(connectionId, SyncHub.ProjectGroup(projectId), cancellationToken);
+            await hub.Clients.Client(connectionId).ProjectAccessEnded(projectId);
+        }
+    }
+
+    public async Task DeleteProjectAsync(Guid ownerId, Guid projectId, CancellationToken ct)
+    {
+        var users = await projects.DeleteAsync(ownerId, projectId, ct);
+        foreach (var user in users)
+        {
+            connections.RevokeProject(user, projectId);
+            foreach (var connectionId in connections.ConnectionIdsOf(user))
+            {
+                await hub.Groups.RemoveFromGroupAsync(connectionId, SyncHub.ProjectGroup(projectId), ct);
+                await hub.Clients.Client(connectionId).ProjectAccessEnded(projectId);
+            }
         }
     }
 }

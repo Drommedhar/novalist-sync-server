@@ -18,7 +18,7 @@ public static class InvitationEndpoints
         RespondAsync(async () =>
         {
             var user = await users.GetOrCreateAsync(principal, ct);
-            await invitations.CreateAsync(user.Id, projectId, request, ct);
+            await invitations.CreateAsync(user.Id, projectId, request, ct, legacyAccount: true);
             return Results.NoContent();
         });
 
@@ -27,7 +27,7 @@ public static class InvitationEndpoints
         RespondAsync(async () =>
         {
             var user = await users.GetOrCreateAsync(principal, ct);
-            return Results.Ok(await invitations.RedeemAsync(user.Id, request.InvitationId, ct));
+            return Results.Ok(await invitations.RedeemAsync(user.Id, request.InvitationId, ct, legacyAccount: true));
         });
 
     private static async Task<IResult> RespondAsync(Func<Task<IResult>> action)
@@ -43,7 +43,7 @@ public static class InvitationEndpoints
         RespondAsync(async () =>
         {
             var user = await users.GetOrCreateAsync(principal, ct);
-            await invitations.RevokeAsync(user.Id, projectId, request.InvitationId, ct);
+            await invitations.RevokeAsync(user.Id, projectId, request.InvitationId, ct, legacyAccount: true);
             return Results.NoContent();
         });
 }

@@ -1,0 +1,108 @@
+using System.Diagnostics.CodeAnalysis;
+using Microsoft.EntityFrameworkCore;
+using Novalist.Sync.Contracts;
+using Novalist.Sync.Server.Data;
+using Novalist.Sync.Server.Updates;
+
+namespace Novalist.Sync.Server.Access;
+
+public sealed class FieldLeaseAccess(SyncDbContext db, DeviceRegistry devices, UpdateLog updates)
+{
+    public Task<FieldLeaseGrant> AcquireAsync(Guid userId, Guid deviceId, FieldLeaseRequest request, CancellationToken ct) =>
+        WithinAsync(userId, deviceId, request, async (project, now) =>
+        {
+            var previous = await ReadAsync(request, ct);
+            if (Owns(previous, deviceId, request, now))
+                return Grant(previous, project, now);
+            if (await db.FieldLeaseAttempts.AnyAsync(attempt => attempt.ProjectId == request.ProjectId && attempt.DeviceId == deviceId && attempt.LeaseId == request.LeaseId, ct))
+                throw new ConflictException("A finished focus request needs a new lease identifier.");
+            await RetireAsync(deviceId, request, ct);
+            if (previous is not null && previous.Epoch == request.Epoch && previous.ExpiresAt > now)
+                return Grant(previous, project, now);
+            var expires = now.AddSeconds(30);
+            long epoch = request.Epoch;
+            await db.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO field_leases (project_id, resource_id, device_id, lease_id, epoch, expires_at)
+                VALUES ({request.ProjectId}, {request.ResourceId}, {deviceId}, {request.LeaseId}, {epoch}, {expires})
+                ON CONFLICT (project_id, resource_id) DO UPDATE
+                SET device_id = EXCLUDED.device_id, lease_id = EXCLUDED.lease_id,
+                    epoch = EXCLUDED.epoch, expires_at = EXCLUDED.expires_at
+                """, ct);
+            return new FieldLeaseGrant(deviceId, request.LeaseId, expires, now, project.LastServerSeq);
+        }, ct);
+
+    public Task<FieldLeaseGrant?> RenewAsync(Guid userId, Guid deviceId, FieldLeaseRequest request, CancellationToken ct) =>
+        WithinAsync<FieldLeaseGrant?>(userId, deviceId, request, async (project, now) =>
+        {
+            var lease = await ReadAsync(request, ct);
+            if (!Owns(lease, deviceId, request, now)) return null;
+            var expires = now.AddSeconds(30);
+            await db.FieldLeases.Where(value => value.ProjectId == request.ProjectId && value.ResourceId == request.ResourceId)
+                .ExecuteUpdateAsync(set => set.SetProperty(value => value.ExpiresAt, expires), ct);
+            return new FieldLeaseGrant(deviceId, request.LeaseId, expires, now, project.LastServerSeq);
+        }, ct);
+
+    public Task<bool> ReleaseAsync(Guid userId, Guid deviceId, FieldLeaseRequest request, CancellationToken ct) =>
+        WithinAsync(userId, deviceId, request, async (_, now) =>
+        {
+            await RetireAsync(deviceId, request, ct);
+            if (!Owns(await ReadAsync(request, ct), deviceId, request, now)) return false;
+            await db.FieldLeases.Where(value => value.ProjectId == request.ProjectId && value.ResourceId == request.ResourceId)
+                .ExecuteUpdateAsync(set => set.SetProperty(value => value.ExpiresAt, DateTimeOffset.UnixEpoch), ct);
+            return true;
+        }, ct);
+
+    public Task<long> PushAsync(Guid userId, Guid deviceId, FieldLeaseRequest request, Envelope envelope, CancellationToken ct)
+    {
+        var header = EnvelopeHeader.Parse(envelope.Header);
+        if (header.ProjectId != request.ProjectId || header.SenderDeviceId != deviceId || header.Epoch != request.Epoch ||
+            header.MsgType != MsgType.Update || header.SenderSeq is 0 or > long.MaxValue)
+            throw new PushRejectedException("The field edit does not belong to this lease context.");
+        return WithinAsync(userId, deviceId, request, async (_, now) =>
+        {
+            var previous = await updates.FindDuplicateAsync(header, (long)header.SenderSeq, envelope, ct);
+            if (previous is { } sequence) return sequence;
+            if (!Owns(await ReadAsync(request, ct), deviceId, request, now))
+                throw new ConflictException("This field's editing lease has expired or changed.");
+            return await updates.AppendAsync(userId, envelope, ct);
+        }, ct);
+    }
+
+    private async Task<T> WithinAsync<T>(Guid userId, Guid deviceId, FieldLeaseRequest request,
+        Func<Project, DateTimeOffset, Task<T>> action, CancellationToken ct)
+    {
+        if (request.ProjectId == Guid.Empty || request.ResourceId == Guid.Empty || request.LeaseId == Guid.Empty)
+            throw new ArgumentException("Project, resource and lease identities are required.");
+        await using var transaction = await AccountAccessLock.AcquireAsync(db, userId, legacyAccount: false, ct);
+        await devices.EnsureActiveAsync(userId, deviceId, ct);
+        var members = await db.Memberships.FromSqlInterpolated($"""
+            SELECT * FROM memberships WHERE project_id = {request.ProjectId} AND user_id = {userId} FOR SHARE
+            """).AsNoTracking().ToListAsync(ct);
+        if (members.SingleOrDefault()?.Role is not (MembershipRole.Owner or MembershipRole.Contributor))
+            throw new AccessDeniedException("Editing a shared field requires write access.");
+        var projects = await db.Projects.FromSqlInterpolated($"SELECT * FROM projects WHERE id = {request.ProjectId} FOR UPDATE")
+            .AsNoTracking().ToListAsync(ct);
+        var project = projects.SingleOrDefault();
+        if (project is null || project.CurrentEpoch != request.Epoch)
+            throw new AccessDeniedException("This project's editing epoch is no longer current.");
+        var now = await db.Database.SqlQuery<DateTimeOffset>($"SELECT clock_timestamp() AS \"Value\"").SingleAsync(ct);
+        var result = await action(project, now);
+        await transaction.CommitAsync(ct);
+        return result;
+    }
+
+    private Task<FieldLease?> ReadAsync(FieldLeaseRequest request, CancellationToken ct) => db.FieldLeases.AsNoTracking()
+        .SingleOrDefaultAsync(lease => lease.ProjectId == request.ProjectId && lease.ResourceId == request.ResourceId, ct);
+
+    private Task<int> RetireAsync(Guid deviceId, FieldLeaseRequest request, CancellationToken ct) =>
+        db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO field_lease_attempts (project_id, device_id, lease_id)
+            VALUES ({request.ProjectId}, {deviceId}, {request.LeaseId}) ON CONFLICT DO NOTHING
+            """, ct);
+
+    private static bool Owns([NotNullWhen(true)] FieldLease? lease, Guid deviceId, FieldLeaseRequest request, DateTimeOffset now) =>
+        lease is not null && lease.DeviceId == deviceId && lease.LeaseId == request.LeaseId && lease.Epoch == request.Epoch && lease.ExpiresAt > now;
+
+    private static FieldLeaseGrant Grant(FieldLease lease, Project project, DateTimeOffset now) =>
+        new(lease.DeviceId, lease.LeaseId, lease.ExpiresAt, now, project.LastServerSeq);
+}

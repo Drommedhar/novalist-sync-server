@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Options;
+using System.Net.Http.Json;
 using Novalist.Sync.Contracts;
 
 namespace Novalist.Sync.Server.Tests;
@@ -32,11 +33,22 @@ public class StartupTests(DatabaseFixture database)
         using var response = await client.PostAsync($"{Protocol.HubPath}/negotiate?negotiateVersion=1", null, TestContext.Current.CancellationToken);
 
         Assert.Equal(System.Net.HttpStatusCode.Unauthorized, response.StatusCode);
+        using var discovery = await client.GetAsync("/client-configuration", TestContext.Current.CancellationToken);
+        Assert.Equal(System.Net.HttpStatusCode.ServiceUnavailable, discovery.StatusCode);
+    }
+
+    [Fact]
+    public async Task DesktopConfiguration_ProvidesPublicLoginSettingsWithoutAuthentication()
+    {
+        await using var server = new ProductionServer(database, "https://idp.test/realms/novalist", "novalist-sync", desktop: true);
+        using var client = server.CreateClient();
+        var configuration = await client.GetFromJsonAsync<NativeClientConfiguration>("/client-configuration", TestContext.Current.CancellationToken);
+        Assert.Equal(new NativeClientConfiguration(1, "https://idp.test/realms/novalist", "novalist", "openid profile offline_access sync"), configuration);
     }
 
     // The real server in the Production environment, configured only through settings,
     // the way an admin would through environment variables.
-    private sealed class ProductionServer(DatabaseFixture database, string? authority, string? audience)
+    private sealed class ProductionServer(DatabaseFixture database, string? authority, string? audience, bool desktop = false)
         : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -53,6 +65,11 @@ public class StartupTests(DatabaseFixture database)
             if (audience is not null)
             {
                 builder.UseSetting(Audience, audience);
+            }
+            if (desktop)
+            {
+                builder.UseSetting("Authentication:NativeClient:ClientId", "novalist");
+                builder.UseSetting("Authentication:NativeClient:Scope", "openid profile offline_access sync");
             }
         }
     }

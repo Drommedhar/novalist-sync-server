@@ -50,7 +50,7 @@ public sealed class UpdateLog(SyncDbContext db)
                                  seq AS (
                                     UPDATE projects
                                     SET last_server_seq = last_server_seq + 1
-                                    WHERE id = {header.ProjectId} AND EXISTS (SELECT 1 FROM writer)
+                                    WHERE id = {header.ProjectId} AND current_epoch = {epoch} AND EXISTS (SELECT 1 FROM writer)
                                     RETURNING last_server_seq
                                  )
                                  INSERT INTO updates (
@@ -69,13 +69,14 @@ public sealed class UpdateLog(SyncDbContext db)
         }
         catch (PostgresException ex) when (ex is { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: SenderSeqIndex })
         {
-            return await ResolveDuplicateAsync(header, senderSeq, envelope, cancellationToken);
+            return await FindDuplicateAsync(header, senderSeq, envelope, cancellationToken)
+                ?? throw new PushRejectedException("The duplicate update is unavailable.");
         }
 
 
     }
 
-    private async Task<long> ResolveDuplicateAsync(EnvelopeHeader header, long senderSeq, Envelope envelope,
+    internal async Task<long?> FindDuplicateAsync(EnvelopeHeader header, long senderSeq, Envelope envelope,
         CancellationToken cancellationToken)
     {
         var existing = await db.Updates
@@ -84,7 +85,9 @@ public sealed class UpdateLog(SyncDbContext db)
                         && u.SenderDeviceId == header.SenderDeviceId
                         && u.SenderSeq == senderSeq)
             .Select(u => new { u.ServerSeq, u.Header, u.Nonce, u.Ciphertext, u.Signature })
-            .SingleAsync(cancellationToken);
+            .SingleOrDefaultAsync(cancellationToken);
+
+        if (existing is null) return null;
 
         var identical = existing.Header.AsSpan().SequenceEqual(envelope.Header)
                         && existing.Nonce.AsSpan().SequenceEqual(envelope.Nonce)

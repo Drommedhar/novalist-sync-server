@@ -10,14 +10,42 @@ the minor version.
 
 ### Added
 
+- Verified-device certificates and staged project epoch transitions. `BeginProjectEpoch`,
+  `StageProjectEpoch`, `StageProjectEpochGrant`, and `CommitProjectEpoch` publish a
+  fresh encrypted checkpoint, remove membership and retire invitations atomically,
+  comparing both the previous epoch and log sequence. `GetProjectEpochGrant` returns
+  only the requesting remaining device's opaque grant. Clients verify owner signatures.
+  Key grants are streamed individually without a participant cap. Package minor 1.5.0.
+
+- Owner-only verified-device project access management: `ListProjectMembers`,
+  `RemoveProjectMember`, `DeleteProject`, and `ProjectAccessEnded` notifications.
+  Removal expires unused links and releases the account's field leases. Deletion
+  removes project data while retaining its identifier as an unavailable tombstone.
+
+- Exclusive field leases: acquire, renew, release and atomically commit an
+  encrypted field edit. Grants include a catch-up sequence and server time;
+  resource IDs are opaque and no field names or values enter the protocol.
+- `ActivateInvitation` binds a single-use claim to its verified device and a
+  32-byte opaque certificate fingerprint. `InvitationActivation` can be retrieved
+  by that same active account/device/certificate after expiry, allowing recovery
+  when a successful claim response is lost. It cannot restore removed membership.
+- Device possession proofs: `DeviceRegistrationContext`, `DevicePublicKeys`,
+  `VerifiedDeviceRegistration`, `DeviceConnectionChallenge` and fixed big-endian
+  `DeviceProof` encodings. `/devices/registration` returns the signed-in account
+  ID; `/devices/verified` accepts immutable public keys and registration/linking
+  signatures. `GetDeviceChallenge` and `AuthenticateDevice` authenticate a hub
+  connection. Accounts opting into verified devices cannot use legacy devices.
+- Hub invitation creation, redemption and revocation for verified connections.
+  Legacy invitation HTTP endpoints reject accounts that have verified devices.
+- `NativeClientConfiguration` and `Protocol.ClientConfigurationPath` expose the
+  protocol version and public OIDC native-client settings at
+  `GET /client-configuration`, without authentication.
 - Authenticated, owner-created single-use invitations: `CreateInvitation`,
   `RedeemInvitation` and `InvitationGrant` records. Creation and revocation
   use `/projects/{projectId}/invitations` and its `/revoke` endpoint;
   claiming uses `/invitations/redeem`. All three are POST requests.
 - `ISyncHub.PublishPresence` and `ISyncClient.ReceivePresence` relay encrypted
   presence envelopes without storing them or allocating a server sequence.
-- Package minor version 1.1.0 for these additive APIs; envelope wire version
-  remains 1.
 
 - `Protocol.Version` (protocol version 1).
 - `MsgType` enum: `Update = 1`, `Snapshot = 2`, `Presence = 3`.

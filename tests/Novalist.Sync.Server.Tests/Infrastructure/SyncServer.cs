@@ -5,23 +5,29 @@ using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Novalist.Sync.Contracts;
+using Novalist.Sync.Server.Data;
 
 namespace Novalist.Sync.Server.Tests.Infrastructure;
 
 // The real server (Program.cs) in memory, pointed at the test database and
 // configured to trust TestTokens instead of an external identity provider.
-public sealed class SyncServer(DatabaseFixture database, TimeProvider? clock = null) : WebApplicationFactory<Program>
+public sealed class SyncServer(DatabaseFixture database, TimeProvider? clock = null, DbCommandInterceptor? commands = null) : WebApplicationFactory<Program>
 {
+    public const string PublicUrl = "https://sync.example/";
     public CapturedLogs Logs { get; } = new();
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         if (clock is not null) builder.ConfigureTestServices(services => services.AddSingleton(clock));
+        if (commands is not null) builder.ConfigureTestServices(services => services.AddDbContext<SyncDbContext>(options => options.AddInterceptors(commands)));
         builder.UseSetting("ConnectionStrings:Default", database.ConnectionString);
+        builder.UseSetting("Collaboration:ServerUrl", PublicUrl);
 
         builder.ConfigureLogging(logging => logging
             .ClearProviders()
