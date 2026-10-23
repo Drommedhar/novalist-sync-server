@@ -632,16 +632,26 @@ MIME types and keys are only visible inside the encrypted manifest.
 | `devices`      | deviceId, userId, public keys, linking signature, `isRecovery` | public keys only |
 | `projects`     | projectId, current epoch, epoch start time                     | yes              |
 | `memberships`  | projectId, userId, role (owner, contributor, viewer)           | yes              |
+| `invitations` | invitationId, projectId, expiry, claimant account/device, opaque certificate fingerprint | metadata; no keys |
+| `field_leases` | projectId, opaque resourceId, holder deviceId, leaseId, epoch, expiry | metadata; no field names or values |
+| `field_lease_attempts` | projectId, deviceId, attempted leaseId | yes |
+| `project_device_authorizations` | projectId, deviceId, epoch, public certificate | public certificate only |
+| `project_epoch_stages` | rotationId, projectId, initiating deviceId, prior epoch/sequence, count, creation time | yes |
+| `project_epoch_envelopes` | rotationId, index, senderSeq, opaque checkpoint envelope | envelope header only |
+| `project_epoch_device_grants` | rotationId, recipient deviceId, public certificate, opaque staged grant | metadata; no keys |
+| `project_epoch_key_grants` | projectId, recipient/grantor deviceIds, epoch, first serverSeq, opaque grant | metadata; no keys |
 | `wrapped_keys` | §6.3 records                                                   | no               |
 | `updates`      | serverSeq, header, nonce, ciphertext, signature                | header only      |
 | `snapshots`    | coversServerSeq, timestamp, envelope                           | header only      |
 | `blob_chunks`  | blobId, index, ciphertext                                      | no               |
 
 Visible metadata: project and item counts, member lists, devices, timestamps,
-edit frequency per item, sizes.
+edit frequency per item, sizes, invitation expiry and claimant identities,
+opaque field-focus identifiers and timing, and epoch-transition boundaries.
 
 Verified owner connections can list project members using `ListProjectMembers`.
-The response contains the existing account UUID, role and username (or verified
+The response contains the existing account UUID, the stable string role
+(`Owner`, `Contributor` or `Viewer`) and username (or verified
 email when no username exists). `RemoveProjectMember` removes access and the
 account's field leases and expires all unused project invitations.
 `DeleteProject` removes memberships, invitations, updates and field lease data;

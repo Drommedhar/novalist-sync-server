@@ -2,14 +2,11 @@ using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 using Novalist.Sync.Contracts;
 using Novalist.Sync.Server.Data;
-using Npgsql;
 
 namespace Novalist.Sync.Server.Updates;
 
 public sealed class UpdateLog(SyncDbContext db)
 {
-    private const string SenderSeqIndex = "ix_updates_project_id_sender_device_id_sender_seq";
-
     public async Task<long> AppendAsync(Guid userId, Envelope envelope, CancellationToken cancellationToken)
     {
         var header = EnvelopeHeader.Parse(envelope.Header);
@@ -26,6 +23,18 @@ public sealed class UpdateLog(SyncDbContext db)
 
         var senderSeq = (long)header.SenderSeq;
         long epoch = header.Epoch;
+        await using var transaction = db.Database.CurrentTransaction is null
+            ? await db.Database.BeginTransactionAsync(cancellationToken) : null;
+        var projects = await db.Projects.FromSqlInterpolated(
+            $"SELECT * FROM projects WHERE id = {header.ProjectId} FOR UPDATE").AsNoTracking().ToListAsync(cancellationToken);
+        var project = projects.SingleOrDefault();
+        if (project is null || !await db.Memberships.AnyAsync(member => member.ProjectId == header.ProjectId &&
+            member.UserId == userId && (member.Role == MembershipRole.Owner || member.Role == MembershipRole.Contributor), cancellationToken))
+            throw new PushRejectedException($"No write access to project {header.ProjectId}.");
+        var duplicate = await FindDuplicateAsync(header, senderSeq, envelope, cancellationToken);
+        if (duplicate is { } previous) return previous;
+        if (project.CurrentEpoch != epoch)
+            throw new PushRejectedException("The update epoch is no longer current. Refresh the project encryption keys.");
 
         var owner = (int)MembershipRole.Owner;
         var contributor = (int)MembershipRole.Contributor;
@@ -35,10 +44,8 @@ public sealed class UpdateLog(SyncDbContext db)
         // locks the project row, which queues concurrent pushes to the same project.
         // Don't compose further LINQ onto this query (e.g. SingleAsync): EF would then
         // wrap the INSERT in a subquery, which PostgreSQL rejects.
-        try
-        {
-            var assigned = await db.Database
-                .SqlQuery<long>($"""
+        var assigned = await db.Database
+            .SqlQuery<long>($"""
                                  WITH writer AS (
                                     SELECT 1
                                     FROM memberships
@@ -63,17 +70,11 @@ public sealed class UpdateLog(SyncDbContext db)
                                  FROM seq
                                  RETURNING server_seq AS "Value"
                                  """).ToListAsync(cancellationToken);
-            return assigned.Count == 1
-                ? assigned[0]
-                : throw new PushRejectedException($"No write access to project {header.ProjectId}.");
-        }
-        catch (PostgresException ex) when (ex is { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: SenderSeqIndex })
-        {
-            return await FindDuplicateAsync(header, senderSeq, envelope, cancellationToken)
-                ?? throw new PushRejectedException("The duplicate update is unavailable.");
-        }
-
-
+        var sequence = assigned.Count == 1
+            ? assigned[0]
+            : throw new PushRejectedException($"No write access to project {header.ProjectId}.");
+        if (transaction is not null) await transaction.CommitAsync(cancellationToken);
+        return sequence;
     }
 
     internal async Task<long?> FindDuplicateAsync(EnvelopeHeader header, long senderSeq, Envelope envelope,

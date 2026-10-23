@@ -13,7 +13,7 @@ public sealed partial class InvitationAccess
             throw new AccessDeniedException("Invitation activation requires a verified device.");
         var projectId = await db.Invitations.AsNoTracking().Where(value => value.Id == request.InvitationId).Select(value => (Guid?)value.ProjectId).SingleOrDefaultAsync(ct)
             ?? throw new AccessDeniedException("This invitation is unavailable.");
-        await db.Projects.FromSqlInterpolated($"SELECT * FROM projects WHERE id = {projectId} FOR UPDATE").ToListAsync(ct);
+        await LockProjectAsync(projectId, ct);
         var rows = await db.Invitations.FromSqlInterpolated(
             $"SELECT * FROM invitations WHERE id = {request.InvitationId} FOR UPDATE").ToListAsync(ct);
         var invitation = rows.SingleOrDefault();

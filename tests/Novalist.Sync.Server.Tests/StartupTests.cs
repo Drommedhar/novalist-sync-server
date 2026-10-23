@@ -1,5 +1,9 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.Extensions.Options;
 using System.Net.Http.Json;
 using Novalist.Sync.Contracts;
@@ -46,9 +50,34 @@ public class StartupTests(DatabaseFixture database)
         Assert.Equal(new NativeClientConfiguration(1, "https://idp.test/realms/novalist", "novalist", "openid profile offline_access sync"), configuration);
     }
 
+    [Theory]
+    [InlineData("http://idp.example/realm", "openid profile")]
+    [InlineData("https://idp.example/realm", "profile")]
+    [InlineData("https://user@idp.example/realm", "openid")]
+    [InlineData("https://idp.example/realm?query=1", "openid")]
+    [InlineData("https://idp.example/realm#fragment", "openid")]
+    public async Task DesktopConfiguration_RejectsInvalidAuthorityOrScope(string authority, string scope)
+    {
+        await using var server = new ProductionServer(database, authority, "novalist-sync", desktop: true, scope: scope);
+        using var client = server.CreateClient();
+        using var response = await client.GetAsync(Protocol.ClientConfigurationPath, TestContext.Current.CancellationToken);
+        Assert.Equal(System.Net.HttpStatusCode.ServiceUnavailable, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DesktopConfiguration_TrimsPublishedSettings()
+    {
+        await using var server = new ProductionServer(database, " https://idp.test/realm ", "novalist-sync",
+            desktop: true, scope: " openid profile ", clientId: " novalist ");
+        using var client = server.CreateClient();
+        var configuration = await client.GetFromJsonAsync<NativeClientConfiguration>(Protocol.ClientConfigurationPath, TestContext.Current.CancellationToken);
+        Assert.Equal(new NativeClientConfiguration(1, "https://idp.test/realm", "novalist", "openid profile"), configuration);
+    }
+
     // The real server in the Production environment, configured only through settings,
     // the way an admin would through environment variables.
-    private sealed class ProductionServer(DatabaseFixture database, string? authority, string? audience, bool desktop = false)
+    private sealed class ProductionServer(DatabaseFixture database, string? authority, string? audience, bool desktop = false,
+        string scope = "openid profile offline_access sync", string clientId = "novalist")
         : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -69,8 +98,11 @@ public class StartupTests(DatabaseFixture database)
             }
             if (desktop)
             {
-                builder.UseSetting("Authentication:NativeClient:ClientId", "novalist");
-                builder.UseSetting("Authentication:NativeClient:Scope", "openid profile offline_access sync");
+                builder.UseSetting("Authentication:NativeClient:ClientId", clientId);
+                builder.UseSetting("Authentication:NativeClient:Scope", scope);
+                // Isolate discovery validation from JWT middleware's separate startup validation.
+                builder.ConfigureTestServices(services => services.Configure<JwtBearerOptions>(
+                    JwtBearerDefaults.AuthenticationScheme, options => options.Configuration = new OpenIdConnectConfiguration()));
             }
         }
     }

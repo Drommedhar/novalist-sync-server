@@ -11,6 +11,53 @@ namespace Novalist.Sync.Server.Tests.Access;
 public sealed class ProjectEpochTests(DatabaseFixture database)
 {
     [Fact]
+    public async Task BeginCanBeRetriedButRejectsTheSameIdentifierForAnotherDevice()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var owner = await database.CreateUserAsync();
+        var device = await database.CreateDeviceAsync(owner.Id);
+        var otherDevice = await database.CreateDeviceAsync(owner.Id);
+        var project = await database.CreateProjectAsync((owner.Id, MembershipRole.Owner));
+        var request = new BeginProjectEpoch(project, Guid.NewGuid(), 0, 0);
+        await using var db = database.CreateContext();
+        var service = new ProjectEpochAccess(db, new(db));
+        await service.BeginAsync(owner.Id, device, request, ct);
+        await service.BeginAsync(owner.Id, device, request, ct);
+        await Assert.ThrowsAsync<ConflictException>(() => service.BeginAsync(owner.Id, otherDevice, request, ct));
+        Assert.Single(await db.ProjectEpochStages.Where(stage => stage.ProjectId == project).ToListAsync(ct));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task InvalidRemovalOrReusedCheckpointSequenceRollsBackTheRotation(bool removeNonMember)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var owner = await database.CreateUserAsync();
+        var member = await database.CreateUserAsync();
+        var outsider = await database.CreateUserAsync();
+        var device = await database.CreateDeviceAsync(owner.Id);
+        var project = await database.CreateProjectAsync((owner.Id, MembershipRole.Owner), (member.Id, MembershipRole.Contributor));
+        await using var db = database.CreateContext();
+        var service = new ProjectEpochAccess(db, new(db));
+        await service.RegisterAsync(owner.Id, device, project, 0, RandomNumberGenerator.GetBytes(182), ct);
+        var original = TestData.Envelope(project, device, 1);
+        await new UpdateLog(db).AppendAsync(owner.Id, original, ct);
+        var request = new BeginProjectEpoch(project, Guid.NewGuid(), 0, 1);
+        await service.BeginAsync(owner.Id, device, request, ct);
+        var checkpoint = original with { Header = (EnvelopeHeader.Parse(original.Header) with { Epoch = 1 }).ToBytes() };
+        await service.StageAsync(owner.Id, device, request.RotationId, checkpoint, ct);
+        var grant = new ProjectEpochGrant(device, RandomNumberGenerator.GetBytes(182), RandomNumberGenerator.GetBytes(128));
+        var error = await Assert.ThrowsAsync<ConflictException>(() =>
+            service.CommitAsync(owner.Id, device, new(request.RotationId, removeNonMember ? outsider.Id : member.Id, [grant]), ct));
+        Assert.Contains(removeNonMember ? "not a member" : "sender sequence", error.Message);
+        Assert.Equal(0U, (await service.StatusAsync(owner.Id, project, ct)).Epoch);
+        Assert.True(await db.Memberships.AnyAsync(value => value.ProjectId == project && value.UserId == member.Id, ct));
+        Assert.Empty(await db.ProjectEpochKeyGrants.Where(value => value.ProjectId == project).ToListAsync(ct));
+        Assert.Single(await db.Updates.Where(value => value.ProjectId == project).ToListAsync(ct));
+    }
+
+    [Fact]
     public async Task ConcurrentRotationsPublishExactlyOneCheckpointAndGrantSet()
     {
         var ct = TestContext.Current.CancellationToken;
@@ -98,7 +145,9 @@ public sealed class ProjectEpochTests(DatabaseFixture database)
         Assert.Equal(1U, (await service.StatusAsync(owner.Id, project, ct)).Epoch);
         Assert.False(await db.Memberships.AnyAsync(member => member.ProjectId == project && member.UserId == guest.Id, ct));
         Assert.Single(await db.Updates.Where(update => update.ProjectId == project).ToListAsync(ct));
-        await Assert.ThrowsAsync<ConflictException>(() => service.CommitAsync(owner.Id, device, new(second.RotationId, guest.Id, [grant]), ct));
+        Assert.False(await db.ProjectEpochStages.AnyAsync(value => value.Id == second.RotationId, ct));
+        var retired = await Assert.ThrowsAsync<ConflictException>(() => service.CommitAsync(owner.Id, device, new(second.RotationId, guest.Id, [grant]), ct));
+        Assert.Equal("The project transition is unavailable.", retired.Message);
         await Assert.ThrowsAsync<AccessDeniedException>(() => service.ReadGrantAsync(guest.Id, device, project, 0, ct));
         var old = envelope with { Header = new EnvelopeHeader(1, MsgType.Update, project, Guid.NewGuid(), 0, device, 2).ToBytes() };
         await Assert.ThrowsAsync<PushRejectedException>(() => new UpdateLog(db).AppendAsync(owner.Id, old, ct));

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Novalist.Sync.Server.Data;
 using Npgsql;
 
@@ -18,10 +19,11 @@ public sealed class DatabaseFixture : IAsyncLifetime
     }.ConnectionString;
 
     // Must match the configuration in Program.cs.
-    public SyncDbContext CreateContext() =>
+    public SyncDbContext CreateContext(params IInterceptor[] interceptors) =>
         new(new DbContextOptionsBuilder<SyncDbContext>()
             .UseNpgsql(ConnectionString)
             .UseSnakeCaseNamingConvention()
+            .AddInterceptors(interceptors)
             .Options);
 
     public async ValueTask InitializeAsync()

@@ -17,6 +17,8 @@ public sealed partial class ProjectEpochAccess
         var project = await LockProjectAsync(projectId, ct);
         var stage = await LockStageAsync(request.RotationId, device, ct);
         await projects.EnsureIsOwnerAsync(user, project.Id, ct);
+        if (!await db.Memberships.AnyAsync(value => value.ProjectId == project.Id && value.UserId == request.RemovedMemberId, ct))
+            throw new ConflictException("The account being removed is not a member of this project.");
         CheckBoundary(project, stage.PreviousEpoch, stage.PreviousServerSeq);
         if (stage.Count == 0) throw new ConflictException("Upload the fresh encrypted checkpoint first.");
         var grants = request.Grants is { Count: > 0 } ? request.Grants :
@@ -32,8 +34,7 @@ public sealed partial class ProjectEpochAccess
             throw new ConflictException("Key grants must include exactly the remaining registered devices.");
         foreach (var grant in grants)
         {
-            ValidateCertificate(grant.Certificate);
-            if (grant.Payload is not { Length: > 0 and <= 8192 }) throw new FormatException("Invalid opaque epoch grant size.");
+            ValidateGrant(grant);
             db.ProjectEpochKeyGrants.Add(new()
             {
                 ProjectId = project.Id,
@@ -72,6 +73,9 @@ public sealed partial class ProjectEpochAccess
             foreach (var value in page)
             {
                 var envelope = JsonSerializer.Deserialize<Envelope>(value.Payload) ?? throw new FormatException("Missing checkpoint envelope.");
+                if (await db.Updates.AnyAsync(update => update.ProjectId == stage.ProjectId &&
+                    update.SenderDeviceId == stage.DeviceId && update.SenderSeq == value.SenderSeq, ct))
+                    throw new ConflictException("The checkpoint sender sequence was already used.");
                 await new UpdateLog(db).AppendAsync(user, envelope, ct);
             }
         }

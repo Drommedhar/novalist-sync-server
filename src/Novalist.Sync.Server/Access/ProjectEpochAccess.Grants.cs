@@ -7,9 +7,7 @@ public sealed partial class ProjectEpochAccess
 {
     public async Task StageGrantAsync(Guid user, Guid device, Guid rotation, ProjectEpochGrant grant, CancellationToken ct)
     {
-        ValidateCertificate(grant.Certificate);
-        if (grant.DeviceId == Guid.Empty || grant.Payload is not { Length: > 0 and <= 8192 })
-            throw new FormatException("Invalid opaque epoch grant.");
+        ValidateGrant(grant);
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var stage = await LockStageAsync(rotation, device, ct);
         await projects.EnsureIsOwnerAsync(user, stage.ProjectId, ct);

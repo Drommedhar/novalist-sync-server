@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Novalist.Sync.Contracts;
 using Novalist.Sync.Server.Tests.Infrastructure;
 using NSec.Cryptography;
+using Npgsql;
 
 namespace Novalist.Sync.Server.Tests.Access;
 
@@ -37,7 +38,8 @@ public sealed class DeviceCutoverTests(DatabaseFixture database)
         {
             await pause.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
             var upgrade = http.PutAsJsonAsync("/devices/verified", proof, ct);
-            await Task.WhenAny(upgrade, Task.Delay(TimeSpan.FromMilliseconds(300), ct));
+            var processId = await pause.EnrollmentConnection.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+            await DatabaseLocks.WaitUntilBlockedAsync(database, processId, ct);
             Assert.False(upgrade.IsCompleted, "Enrollment must wait until the already-authorized legacy mutation commits.");
             pause.Release.TrySetResult();
             using var created = await create.WaitAsync(ct);
@@ -52,10 +54,14 @@ public sealed class DeviceCutoverTests(DatabaseFixture database)
     {
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<int> EnrollmentConnection { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command, CommandEventData eventData,
             InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
         {
+            if (Entered.Task.IsCompleted && command.CommandText.Contains("SELECT * FROM users", StringComparison.Ordinal) &&
+                command.CommandText.Contains("FOR UPDATE", StringComparison.Ordinal))
+                EnrollmentConnection.TrySetResult(((NpgsqlConnection)command.Connection!).ProcessID);
             if (command.CommandText.Contains("INSERT INTO invitations", StringComparison.Ordinal))
             {
                 Entered.TrySetResult();

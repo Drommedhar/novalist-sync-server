@@ -102,6 +102,7 @@ public sealed partial class SyncHub(
         try
         {
             await projects.EnsureCanReadAsync(UserId, projectId, cancellationToken);
+            connections.JoinProject(Context.ConnectionId, projectId);
         }
         catch
         {
@@ -110,7 +111,11 @@ public sealed partial class SyncHub(
         }
     }
 
-    public Task LeaveProject(Guid projectId) => Groups.RemoveFromGroupAsync(Context.ConnectionId, ProjectGroup(projectId), Context.ConnectionAborted);
+    public Task LeaveProject(Guid projectId)
+    {
+        connections.LeaveProject(Context.ConnectionId, projectId);
+        return Groups.RemoveFromGroupAsync(Context.ConnectionId, ProjectGroup(projectId), Context.ConnectionAborted);
+    }
 
     public async Task<long> Push(Envelope envelope)
     {
@@ -140,8 +145,9 @@ public sealed partial class SyncHub(
     public async Task PublishPresence(Envelope envelope)
     {
         await EnsureDeviceActiveAsync(Context.ConnectionAborted);
-        var projectId = await presence.ValidateAsync(UserId, DeviceId, envelope, Context.ConnectionAborted);
-        await Clients.OthersInGroup(ProjectGroup(projectId)).ReceivePresence(envelope);
+        await presence.DeliverAsync(UserId, DeviceId, envelope, (projectId, activeDevices) =>
+            Clients.Clients(connections.PresenceRecipients(projectId, activeDevices, Context.ConnectionId)).ReceivePresence(envelope),
+            Context.ConnectionAborted);
     }
 
     public async IAsyncEnumerable<SequencedEnvelope> CatchUp(Guid projectId, long afterServerSeq, [EnumeratorCancellation] CancellationToken cancellationToken)

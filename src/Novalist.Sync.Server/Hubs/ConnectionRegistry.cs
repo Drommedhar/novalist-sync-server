@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Security.Cryptography;
 using Microsoft.AspNetCore.SignalR;
 
 namespace Novalist.Sync.Server.Hubs;
@@ -37,8 +36,28 @@ public sealed class ConnectionRegistry
     public void RevokeProject(Guid userId, Guid projectId)
     {
         foreach (var connection in _connections.Values.Where(value => value.UserId == userId))
+        {
             connection.RevokedProjects.TryAdd(projectId, 0);
+            connection.JoinedProjects.TryRemove(projectId, out _);
+        }
     }
+
+    public void JoinProject(string connectionId, Guid projectId)
+    {
+        if (!_connections.TryGetValue(connectionId, out var connection)) return;
+        connection.JoinedProjects.TryAdd(projectId, 0);
+        connection.RevokedProjects.TryRemove(projectId, out _);
+    }
+
+    public void LeaveProject(string connectionId, Guid projectId)
+    {
+        if (_connections.TryGetValue(connectionId, out var connection)) connection.JoinedProjects.TryRemove(projectId, out _);
+    }
+
+    public IReadOnlyList<string> PresenceRecipients(Guid projectId, IReadOnlySet<Guid> activeDevices, string sender) =>
+        _connections.Values.Where(connection => connection.Context.ConnectionId != sender &&
+            activeDevices.Contains(connection.DeviceId) && connection.JoinedProjects.ContainsKey(projectId) &&
+            !connection.RevokedProjects.ContainsKey(projectId)).Select(connection => connection.Context.ConnectionId).ToArray();
 
     public bool ProjectRevoked(string connectionId, Guid projectId) =>
         !_connections.TryGetValue(connectionId, out var connection) || connection.RevokedProjects.ContainsKey(projectId);
@@ -46,5 +65,6 @@ public sealed class ConnectionRegistry
     private sealed record Connection(HubCallerContext Context, Guid UserId, Guid DeviceId)
     {
         internal ConcurrentDictionary<Guid, byte> RevokedProjects { get; } = new();
+        internal ConcurrentDictionary<Guid, byte> JoinedProjects { get; } = new();
     }
 }

@@ -38,7 +38,7 @@ public static class InvitationEndpoints
         catch (ArgumentException ex) { return Results.Problem(detail: ex.Message, statusCode: 400); }
     }
 
-    private static Task<IResult> RevokeAsync(Guid projectId, RedeemInvitation request, ClaimsPrincipal principal,
+    private static Task<IResult> RevokeAsync(Guid projectId, RevokeInvitation request, ClaimsPrincipal principal,
         UserDirectory users, InvitationAccess invitations, CancellationToken ct) =>
         RespondAsync(async () =>
         {

@@ -479,6 +479,8 @@ public sealed class SyncHubTests(DatabaseFixture database) : IAsyncDisposable
         var relayed = await received.Task.WaitAsync(TimeSpan.FromSeconds(10), Ct);
         Assert.Equal(presence.Ciphertext, relayed.Ciphertext);
         Assert.Equal(presence.Header, relayed.Header);
+        Assert.Equal(presence.Nonce, relayed.Nonce);
+        Assert.Equal(presence.Signature, relayed.Signature);
         Assert.Empty(await guest.CatchUpAsync(project, 0));
         Assert.Equal(1, await owner.PushAsync(TestData.Envelope(project, owner.DeviceId, 2)));
     }

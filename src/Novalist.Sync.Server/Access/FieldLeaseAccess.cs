@@ -88,13 +88,13 @@ public sealed class FieldLeaseAccess(SyncDbContext db, DeviceRegistry devices, U
             throw new ArgumentException("Project, resource and lease identities are required.");
         await using var transaction = await AccountAccessLock.AcquireAsync(db, userId, legacyAccount: false, ct);
         await devices.EnsureActiveAsync(userId, deviceId, ct);
+        var projects = await db.Projects.FromSqlInterpolated($"SELECT * FROM projects WHERE id = {request.ProjectId} FOR UPDATE")
+            .AsNoTracking().ToListAsync(ct);
         var members = await db.Memberships.FromSqlInterpolated($"""
             SELECT * FROM memberships WHERE project_id = {request.ProjectId} AND user_id = {userId} FOR SHARE
             """).AsNoTracking().ToListAsync(ct);
         if (members.SingleOrDefault()?.Role is not (MembershipRole.Owner or MembershipRole.Contributor))
             throw new AccessDeniedException("Editing a shared field requires write access.");
-        var projects = await db.Projects.FromSqlInterpolated($"SELECT * FROM projects WHERE id = {request.ProjectId} FOR UPDATE")
-            .AsNoTracking().ToListAsync(ct);
         var project = projects.SingleOrDefault();
         if (project is null || project.CurrentEpoch != request.Epoch)
             throw new AccessDeniedException("This project's editing epoch is no longer current.");

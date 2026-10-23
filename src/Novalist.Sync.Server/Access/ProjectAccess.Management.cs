@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Novalist.Sync.Contracts;
+using Novalist.Sync.Server.Data;
 
 namespace Novalist.Sync.Server.Access;
 
@@ -8,10 +9,17 @@ public sealed partial class ProjectAccess
     public async Task<IReadOnlyList<ProjectMember>> ListMembersAsync(Guid ownerId, Guid projectId, CancellationToken ct)
     {
         await EnsureIsOwnerAsync(ownerId, projectId, ct);
-        return await db.Memberships.Where(member => member.ProjectId == projectId)
+        var members = await db.Memberships.Where(member => member.ProjectId == projectId)
             .Join(db.Users, member => member.UserId, user => user.Id,
-                (member, user) => new ProjectMember(user.Id, user.UserName ?? user.Email ?? user.Id.ToString(), member.Role.ToString()))
+                (member, user) => new { user.Id, Name = user.UserName ?? user.Email ?? user.Id.ToString(), member.Role })
             .ToListAsync(ct);
+        return members.Select(member => new ProjectMember(member.Id, member.Name, member.Role switch
+        {
+            MembershipRole.Owner => ProjectRoles.Owner,
+            MembershipRole.Contributor => ProjectRoles.Contributor,
+            MembershipRole.Viewer => ProjectRoles.Viewer,
+            _ => throw new InvalidOperationException("Unsupported stored project role.")
+        })).ToArray();
     }
 
     public async Task<IReadOnlyList<Guid>> DeleteAsync(Guid ownerId, Guid projectId, CancellationToken ct)

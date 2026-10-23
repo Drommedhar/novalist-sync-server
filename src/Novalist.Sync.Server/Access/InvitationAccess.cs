@@ -10,6 +10,7 @@ public sealed partial class InvitationAccess(SyncDbContext db, ProjectAccess pro
     public async Task CreateAsync(Guid ownerId, Guid projectId, CreateInvitation request, CancellationToken ct, bool legacyAccount = false)
     {
         await using var transaction = await AccountAccessLock.AcquireAsync(db, ownerId, legacyAccount, ct);
+        await LockProjectAsync(projectId, ct);
         await projects.EnsureIsOwnerAsync(ownerId, projectId, ct);
         var now = clock.GetUtcNow();
         if (request.InvitationId == Guid.Empty || request.ExpiresAt <= now || request.ExpiresAt > now.AddDays(7))
@@ -40,6 +41,10 @@ public sealed partial class InvitationAccess(SyncDbContext db, ProjectAccess pro
     public async Task<InvitationGrant> RedeemAsync(Guid userId, Guid invitationId, CancellationToken ct, bool legacyAccount = false)
     {
         await using var transaction = await AccountAccessLock.AcquireAsync(db, userId, legacyAccount, ct);
+        var projectId = await db.Invitations.AsNoTracking().Where(value => value.Id == invitationId)
+            .Select(value => (Guid?)value.ProjectId).SingleOrDefaultAsync(ct)
+            ?? throw new AccessDeniedException("This invitation is unavailable.");
+        await LockProjectAsync(projectId, ct);
         var rows = await db.Invitations.FromSqlInterpolated(
             $"SELECT * FROM invitations WHERE id = {invitationId} FOR UPDATE").ToListAsync(ct);
         var invitation = rows.SingleOrDefault();
@@ -75,6 +80,7 @@ public sealed partial class InvitationAccess(SyncDbContext db, ProjectAccess pro
     public async Task RevokeAsync(Guid ownerId, Guid projectId, Guid invitationId, CancellationToken ct, bool legacyAccount = false)
     {
         await using var transaction = await AccountAccessLock.AcquireAsync(db, ownerId, legacyAccount, ct);
+        await LockProjectAsync(projectId, ct);
         await projects.EnsureIsOwnerAsync(ownerId, projectId, ct);
         if (invitationId == Guid.Empty) throw new ArgumentException("An invitation identifier is required.");
         await db.Database.ExecuteSqlInterpolatedAsync($"""
@@ -85,4 +91,7 @@ public sealed partial class InvitationAccess(SyncDbContext db, ProjectAccess pro
             """, ct);
         await transaction.CommitAsync(ct);
     }
+
+    private Task<List<Project>> LockProjectAsync(Guid projectId, CancellationToken ct) =>
+        db.Projects.FromSqlInterpolated($"SELECT * FROM projects WHERE id = {projectId} FOR UPDATE").ToListAsync(ct);
 }

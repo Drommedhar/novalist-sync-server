@@ -39,13 +39,6 @@ public sealed class AccessRevocation(
     {
         var users = await projects.DeleteAsync(ownerId, projectId, ct);
         foreach (var user in users)
-        {
-            connections.RevokeProject(user, projectId);
-            foreach (var connectionId in connections.ConnectionIdsOf(user))
-            {
-                await hub.Groups.RemoveFromGroupAsync(connectionId, SyncHub.ProjectGroup(projectId), ct);
-                await hub.Clients.Client(connectionId).ProjectAccessEnded(projectId);
-            }
-        }
+            await NotifyRemovedAsync(projectId, user, ct);
     }
 }

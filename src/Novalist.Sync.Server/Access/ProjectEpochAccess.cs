@@ -63,16 +63,16 @@ public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess p
         await projects.EnsureIsOwnerAsync(user, request.ProjectId, ct);
         CheckBoundary(project, request.PreviousEpoch, request.PreviousServerSeq);
         await db.ProjectEpochStages.Where(value => value.ProjectId == request.ProjectId && value.CreatedAt < DateTimeOffset.UtcNow.AddDays(-1)).ExecuteDeleteAsync(ct);
-        db.ProjectEpochStages.Add(new()
-        {
-            Id = request.RotationId,
-            ProjectId = request.ProjectId,
-            DeviceId = device,
-            PreviousEpoch = request.PreviousEpoch,
-            PreviousServerSeq = request.PreviousServerSeq,
-            CreatedAt = DateTimeOffset.UtcNow
-        });
-        await db.SaveChangesAsync(ct);
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO project_epoch_stages (id, project_id, device_id, previous_epoch, previous_server_seq, created_at, count)
+            VALUES ({request.RotationId}, {request.ProjectId}, {device}, {(long)request.PreviousEpoch},
+                {request.PreviousServerSeq}, {DateTimeOffset.UtcNow}, 0)
+            ON CONFLICT (id) DO NOTHING
+            """, ct);
+        var stage = await db.ProjectEpochStages.AsNoTracking().SingleAsync(value => value.Id == request.RotationId, ct);
+        if (stage.ProjectId != request.ProjectId || stage.DeviceId != device ||
+            stage.PreviousEpoch != request.PreviousEpoch || stage.PreviousServerSeq != request.PreviousServerSeq)
+            throw new ConflictException("The rotation identifier is already in use.");
         await transaction.CommitAsync(ct);
     }
 
@@ -111,7 +111,7 @@ public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess p
     }
 
     private async Task<Project> LockProjectAsync(Guid project, CancellationToken ct) =>
-        (await db.Projects.FromSqlInterpolated($"SELECT * FROM projects WHERE id = {project} FOR UPDATE").ToListAsync(ct)).SingleOrDefault()
+        (await db.Projects.FromSqlInterpolated($"SELECT * FROM projects WHERE id = {project} FOR UPDATE").AsNoTracking().ToListAsync(ct)).SingleOrDefault()
         ?? throw new AccessDeniedException("The shared project is unavailable.");
 
     private async Task<ProjectEpochStage> LockStageAsync(Guid rotation, Guid device, CancellationToken ct)
@@ -130,5 +130,12 @@ public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess p
     private static void ValidateCertificate(byte[] certificate)
     {
         if (certificate is not { Length: >= 182 and <= 332 }) throw new FormatException("Invalid public project certificate size.");
+    }
+
+    private static void ValidateGrant(ProjectEpochGrant grant)
+    {
+        ValidateCertificate(grant.Certificate);
+        if (grant.DeviceId == Guid.Empty || grant.Payload is not { Length: > 0 and <= 8192 })
+            throw new FormatException("Invalid opaque epoch grant.");
     }
 }

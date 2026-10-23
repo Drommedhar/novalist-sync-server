@@ -80,6 +80,59 @@ public class ConnectionRegistryTests
         Assert.Equal(500, _registry.ConnectionIdsOf(userId).Count);
     }
 
+    [Fact]
+    public void RevocationIsScopedToTheUserAndProjectAndCanBeRegranted()
+    {
+        var user = Guid.NewGuid();
+        var first = Add(user, Guid.NewGuid());
+        var second = Add(user, Guid.NewGuid());
+        var other = Add(Guid.NewGuid(), Guid.NewGuid());
+        var project = Guid.NewGuid();
+        _registry.RevokeProject(user, project);
+        Assert.True(_registry.ProjectRevoked(first.ConnectionId, project));
+        Assert.True(_registry.ProjectRevoked(second.ConnectionId, project));
+        Assert.False(_registry.ProjectRevoked(other.ConnectionId, project));
+        Assert.False(_registry.ProjectRevoked(first.ConnectionId, Guid.NewGuid()));
+        Assert.True(_registry.ProjectRevoked("unknown", project));
+        _registry.JoinProject(first.ConnectionId, project);
+        Assert.False(_registry.ProjectRevoked(first.ConnectionId, project));
+        Assert.True(_registry.ProjectRevoked(second.ConnectionId, project));
+        _registry.JoinProject("unknown", project);
+        Assert.True(_registry.ProjectRevoked("unknown", project));
+    }
+
+    [Fact]
+    public void AbortUserAbortsAllTheirDevicesAndLeavesOtherUsersConnected()
+    {
+        var user = Guid.NewGuid();
+        var first = Add(user, Guid.NewGuid());
+        var second = Add(user, Guid.NewGuid());
+        var other = Add(Guid.NewGuid(), Guid.NewGuid());
+        _registry.AbortUser(user);
+        Assert.True(first.Aborted);
+        Assert.True(second.Aborted);
+        Assert.False(other.Aborted);
+    }
+
+    [Fact]
+    public void PresenceRecipientsRequireAnActiveDeviceAndAJoinedUnrevokedProject()
+    {
+        var user = Guid.NewGuid();
+        var device = Guid.NewGuid();
+        var sender = Add(user, device);
+        var joined = Add(user, device);
+        var inactive = Add(user, Guid.NewGuid());
+        Add(user, device);
+        var project = Guid.NewGuid();
+        foreach (var connection in new[] { sender, joined, inactive }) _registry.JoinProject(connection.ConnectionId, project);
+        Assert.Equal([joined.ConnectionId], _registry.PresenceRecipients(project, new HashSet<Guid> { device }, sender.ConnectionId));
+        _registry.LeaveProject(joined.ConnectionId, project);
+        Assert.Empty(_registry.PresenceRecipients(project, new HashSet<Guid> { device }, sender.ConnectionId));
+        _registry.JoinProject(joined.ConnectionId, project);
+        _registry.RevokeProject(user, project);
+        Assert.Empty(_registry.PresenceRecipients(project, new HashSet<Guid> { device }, sender.ConnectionId));
+    }
+
     private FakeHubCallerContext Add(Guid userId, Guid deviceId)
     {
         var context = new FakeHubCallerContext();

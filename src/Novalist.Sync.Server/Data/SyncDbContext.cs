@@ -99,6 +99,8 @@ public sealed class SyncDbContext(DbContextOptions<SyncDbContext> options) : DbC
             invitation.HasOne<Project>().WithMany().HasForeignKey(i => i.ProjectId);
             invitation.HasOne<User>().WithMany().HasForeignKey(i => i.RedeemedBy)
                 .OnDelete(DeleteBehavior.Restrict);
+            invitation.HasOne<Device>().WithMany().HasForeignKey(i => i.ActivatedDeviceId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

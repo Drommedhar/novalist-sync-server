@@ -10,6 +10,11 @@ the minor version.
 
 ### Added
 
+- Stable string role names in `ProjectRoles` (`Owner`, `Contributor`, `Viewer`),
+  retaining the existing JSON and MessagePack representation of `ProjectMember.Role`.
+- A dedicated `RevokeInvitation` request and shared `Protocol.DeviceRegistrationPath`
+  and `Protocol.VerifiedDevicesPath` constants for verified-device endpoints.
+
 - `PushGuardedFieldEdit` atomically requires both the focused field lease and a
   second opaque resource lease in the same project and epoch. Expired guards
   cannot commit delayed edits; acknowledged retries keep their original sequence.
@@ -21,7 +26,9 @@ the minor version.
   fresh encrypted checkpoint, remove membership and retire invitations atomically,
   comparing both the previous epoch and log sequence. `GetProjectEpochGrant` returns
   only the requesting remaining device's opaque grant. Clients verify owner signatures.
-  Key grants are streamed individually without a participant cap. Package minor 1.5.0.
+  Key grants are streamed individually without a participant cap. Package minor 1.6.0.
+  `ISyncClient.ProjectEpochChanged(projectId, epoch)` notifies remaining members
+  after the checkpoint and access change commit.
 
 - Owner-only verified-device project access management: `ListProjectMembers`,
   `RemoveProjectMember`, `DeleteProject`, and `ProjectAccessEnded` notifications.
@@ -73,4 +80,5 @@ the minor version.
   `JoinProject` / `LeaveProject` (start / stop receiving live updates of a
   project), `Push` (returns the assigned `serverSeq`) and `CatchUp` (streams
   every update after `afterServerSeq`).
-- `ISyncClient` (server → client): `ReceiveUpdate`.
+- `ISyncClient` (server → client): `ReceiveUpdate`, `ReceivePresence`,
+  `ProjectAccessEnded` and `ProjectEpochChanged`.

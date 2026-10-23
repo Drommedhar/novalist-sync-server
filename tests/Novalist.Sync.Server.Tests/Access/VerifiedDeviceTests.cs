@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
@@ -14,6 +15,22 @@ public sealed class VerifiedDeviceTests(DatabaseFixture database) : IAsyncDispos
 {
     private readonly SyncServer server = new(database);
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    [Fact]
+    public async Task InvalidServerAddressIsNotReportedAsAnInvalidDeviceProof()
+    {
+        await using var misconfigured = server.WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Development");
+            builder.UseSetting("Collaboration:ServerUrl", "not-a-server-url");
+        });
+        using var client = misconfigured.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", TestTokens.Create(Guid.NewGuid().ToString()));
+        var keys = new DevicePublicKeys(Guid.NewGuid(), new byte[32], new byte[32]);
+        using var response = await client.PutAsJsonAsync(Protocol.VerifiedDevicesPath,
+            new VerifiedDeviceRegistration(keys, new byte[64]), Ct);
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+    }
 
     [Fact]
     public async Task ALinkedDeviceWorksButRevokedKeysCannotEnrollAnotherDeviceOrClaimItsSibling()

@@ -72,7 +72,10 @@ public sealed partial class ProjectAccess(SyncDbContext db)
             throw new ConflictException($"Cannot remove owner from project {projectId}.");
         }
 
+        await EnsureIsOwnerAsync(ownerId, projectId, cancellationToken);
+        if (!await db.Users.AnyAsync(user => user.Id == memberId, cancellationToken)) return;
         await using var transaction = await AccountAccessLock.AcquireAsync(db, memberId, legacyAccount: false, cancellationToken);
+        await db.Projects.FromSqlInterpolated($"SELECT * FROM projects WHERE id = {projectId} FOR UPDATE").ToListAsync(cancellationToken);
         await EnsureIsOwnerAsync(ownerId, projectId, cancellationToken);
         if (await db.ProjectDeviceAuthorizations.AnyAsync(value => value.ProjectId == projectId, cancellationToken))
             throw new ConflictException("Rotate the project encryption keys when removing a registered collaborator.");

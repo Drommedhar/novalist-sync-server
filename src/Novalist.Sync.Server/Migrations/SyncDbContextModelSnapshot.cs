@@ -152,6 +152,9 @@ namespace Novalist.Sync.Server.Migrations
                     b.HasKey("Id")
                         .HasName("pk_invitations");
 
+                    b.HasIndex("ActivatedDeviceId")
+                        .HasDatabaseName("ix_invitations_activated_device_id");
+
                     b.HasIndex("ProjectId")
                         .HasDatabaseName("ix_invitations_project_id");
 
@@ -514,6 +517,12 @@ namespace Novalist.Sync.Server.Migrations
 
             modelBuilder.Entity("Novalist.Sync.Server.Data.Invitation", b =>
                 {
+                    b.HasOne("Novalist.Sync.Server.Data.Device", null)
+                        .WithMany()
+                        .HasForeignKey("ActivatedDeviceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_invitations_devices_activated_device_id");
+
                     b.HasOne("Novalist.Sync.Server.Data.Project", null)
                         .WithMany()
                         .HasForeignKey("ProjectId")
