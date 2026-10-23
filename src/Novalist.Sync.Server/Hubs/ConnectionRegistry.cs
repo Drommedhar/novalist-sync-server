@@ -37,34 +37,35 @@ public sealed class ConnectionRegistry
     {
         foreach (var connection in _connections.Values.Where(value => value.UserId == userId))
         {
-            connection.RevokedProjects.TryAdd(projectId, 0);
-            connection.JoinedProjects.TryRemove(projectId, out _);
+            connection.Projects[projectId] = ProjectConnectionState.Revoked;
         }
     }
 
     public void JoinProject(string connectionId, Guid projectId)
     {
         if (!_connections.TryGetValue(connectionId, out var connection)) return;
-        connection.JoinedProjects.TryAdd(projectId, 0);
-        connection.RevokedProjects.TryRemove(projectId, out _);
+        connection.Projects[projectId] = ProjectConnectionState.Joined;
     }
 
     public void LeaveProject(string connectionId, Guid projectId)
     {
-        if (_connections.TryGetValue(connectionId, out var connection)) connection.JoinedProjects.TryRemove(projectId, out _);
+        if (_connections.TryGetValue(connectionId, out var connection))
+            connection.Projects.TryRemove(new(projectId, ProjectConnectionState.Joined));
     }
 
     public IReadOnlyList<string> PresenceRecipients(Guid projectId, IReadOnlySet<Guid> activeDevices, string sender) =>
         _connections.Values.Where(connection => connection.Context.ConnectionId != sender &&
-            activeDevices.Contains(connection.DeviceId) && connection.JoinedProjects.ContainsKey(projectId) &&
-            !connection.RevokedProjects.ContainsKey(projectId)).Select(connection => connection.Context.ConnectionId).ToArray();
+            activeDevices.Contains(connection.DeviceId) && connection.Projects.TryGetValue(projectId, out var state) &&
+            state == ProjectConnectionState.Joined).Select(connection => connection.Context.ConnectionId).ToArray();
 
     public bool ProjectRevoked(string connectionId, Guid projectId) =>
-        !_connections.TryGetValue(connectionId, out var connection) || connection.RevokedProjects.ContainsKey(projectId);
+        !_connections.TryGetValue(connectionId, out var connection) ||
+        connection.Projects.TryGetValue(projectId, out var state) && state == ProjectConnectionState.Revoked;
+
+    private enum ProjectConnectionState { Joined, Revoked }
 
     private sealed record Connection(HubCallerContext Context, Guid UserId, Guid DeviceId)
     {
-        internal ConcurrentDictionary<Guid, byte> RevokedProjects { get; } = new();
-        internal ConcurrentDictionary<Guid, byte> JoinedProjects { get; } = new();
+        internal ConcurrentDictionary<Guid, ProjectConnectionState> Projects { get; } = new();
     }
 }

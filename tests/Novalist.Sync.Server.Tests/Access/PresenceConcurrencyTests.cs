@@ -11,6 +11,46 @@ namespace Novalist.Sync.Server.Tests.Access;
 
 public sealed class PresenceConcurrencyTests(DatabaseFixture database)
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RotationDuringPreflightRejectsStaleOrRemovedSendersBeforeDelivery(bool removeSender)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var owner = await database.CreateUserAsync();
+        var guest = await database.CreateUserAsync();
+        var ownerDevice = await database.CreateDeviceAsync(owner.Id);
+        var guestDevice = await database.CreateDeviceAsync(guest.Id);
+        var project = await database.CreateProjectAsync((owner.Id, MembershipRole.Owner), (guest.Id, MembershipRole.Contributor));
+        await using var rotating = database.CreateContext();
+        var epochs = new ProjectEpochAccess(rotating, new(rotating));
+        await epochs.RegisterAsync(owner.Id, ownerDevice, project, 0, RandomNumberGenerator.GetBytes(182), ct);
+        var rotation = Guid.NewGuid();
+        await epochs.BeginAsync(owner.Id, ownerDevice, new(project, rotation, 0, 0), ct);
+        var checkpoint = TestData.Envelope(project, ownerDevice, 1);
+        checkpoint = checkpoint with { Header = (EnvelopeHeader.Parse(checkpoint.Header) with { Epoch = 1 }).ToBytes() };
+        await epochs.StageAsync(owner.Id, ownerDevice, rotation, checkpoint, ct);
+        var pause = new SqlCommandPause("FOR SHARE");
+        await using var sending = database.CreateContext(pause);
+        var presence = new PresenceAccess(sending, new(sending), new(sending));
+        var sender = removeSender ? guest.Id : owner.Id;
+        var device = removeSender ? guestDevice : ownerDevice;
+        var delivered = false;
+        var delivery = presence.DeliverAsync(sender, device, TestData.Envelope(project, device, 1, MsgType.Presence),
+            (_, _) => { delivered = true; return Task.CompletedTask; }, ct);
+        try
+        {
+            await pause.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+            await epochs.CommitAsync(owner.Id, ownerDevice, new(rotation, guest.Id,
+                [new(ownerDevice, RandomNumberGenerator.GetBytes(182), RandomNumberGenerator.GetBytes(128))]), ct);
+            pause.Release.TrySetResult();
+            if (removeSender) await Assert.ThrowsAsync<AccessDeniedException>(() => delivery);
+            else await Assert.ThrowsAsync<PushRejectedException>(() => delivery);
+            Assert.False(delivered);
+        }
+        finally { pause.Release.TrySetResult(); }
+    }
+
     [Fact]
     public async Task RotationWaitsForPresenceDeliveryAndThenExcludesTheRemovedMember()
     {
