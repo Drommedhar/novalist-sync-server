@@ -14,6 +14,7 @@ var relayEnabled = builder.Configuration.GetValue("Relay:Enabled", true);
 if (relayEnabled)
 {
     builder.Services.AddSingleton<RelaySessions>();
+    builder.Services.AddRelayTransportSecurity(builder.Configuration);
 }
 else
 {
@@ -63,6 +64,7 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
+if (relayEnabled) app.UseRelayTransportSecurity(app.Environment);
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20), KeepAliveTimeout = TimeSpan.FromSeconds(15) });
