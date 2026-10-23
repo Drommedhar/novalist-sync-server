@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Options;
 using Novalist.Sync.Contracts;
+using Novalist.Sync.Server.Relay;
 
 namespace Novalist.Sync.Server.Access;
 
@@ -14,6 +15,8 @@ public static class NativeClientEndpoint
 
     private static IResult GetConfiguration(IConfiguration configuration, IOptionsMonitor<JwtBearerOptions> bearer)
     {
+        if (!RelayAuthentication.Required(configuration))
+            return Results.Ok(new NativeClientConfiguration(Protocol.Version, null, null, null, false));
         var authority = bearer.Get(JwtBearerDefaults.AuthenticationScheme).Authority?.Trim();
         var clientId = configuration["Authentication:NativeClient:ClientId"]?.Trim();
         var scope = configuration["Authentication:NativeClient:Scope"]?.Trim();

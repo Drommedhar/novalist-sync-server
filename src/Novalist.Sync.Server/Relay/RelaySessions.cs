@@ -8,9 +8,9 @@ public sealed class RelaySessions
 {
     private readonly ConcurrentDictionary<Guid, RelaySession> sessions = new();
 
-    internal RelaySession Create(string issuer, string subject)
+    internal RelaySession Create(string issuer, string subject, byte[]? hostProof = null)
     {
-        var session = new RelaySession(issuer, subject);
+        var session = new RelaySession(issuer, subject, hostProof);
         if (!sessions.TryAdd(session.Id, session)) throw new InvalidOperationException("Relay session collision.");
         return session;
     }
@@ -24,8 +24,9 @@ public sealed class RelaySessions
     }
 }
 
-internal sealed class RelaySession(string issuer, string subject)
+internal sealed class RelaySession(string issuer, string subject, byte[]? hostProof)
 {
+    public byte[]? HostProof { get; } = hostProof;
     public Guid Id { get; } = Guid.NewGuid();
     public string Issuer { get; } = issuer;
     public string Subject { get; } = subject;

@@ -868,6 +868,14 @@ storage and offline-joining design for that integration. It maps no persistence
 endpoints and requires no database. The preceding design remains documentation
 for the explicitly enabled legacy persistence mode (`Relay:Enabled=false`).
 
+Relay authentication is optional through `Relay:RequireAuthentication=false`;
+the default remains true. Anonymous hosts prove route ownership with a random
+session capability in the `X-Novalist-Relay-Host` request header. The server learns
+that capability and retains only its SHA-256 hash in memory for the session's
+lifetime. This adds transient relay metadata, not project encryption keys or
+participant names. See [relay.md](relay.md) for discovery, transport requirements
+and ownership checks. The legacy persistence mode's authentication is unchanged.
+
 ## 13. Future work
 
 - MLS (RFC 9420) for forward secrecy and post-compromise security of key

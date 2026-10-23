@@ -5,10 +5,18 @@ store project files, checkpoints, encrypted update history or offline queues.
 Existing persistence endpoints are not mapped. The old implementation remains
 available only with the explicit compatibility setting `Relay:Enabled=false`.
 
-Keep the existing OIDC Bearer settings and native desktop sign-in configuration.
+Authentication is required by default (`Relay:RequireAuthentication=true`), using
+the existing OIDC Bearer settings and native client sign-in configuration.
+For a relay without accounts, explicitly set `Relay__RequireAuthentication=false`;
+no identity provider is needed. This setting applies only to relay mode: legacy
+persistence mode always requires authentication. `/client-configuration` advertises
+`authenticationRequired`; anonymous configurations return null authority, client ID
+and scope. Novalist detects this policy and either starts browser sign-in when
+sharing or joining, or asks for a display name and connects directly. Display names
+in anonymous sessions are chosen labels, not verified account identities.
+
 No `ConnectionStrings:Default`, PostgreSQL instance or migrations are needed in
-relay mode. Start with `dotnet run --project src/Novalist.Sync.Server` and supply
-the identity provider through environment variables as before. Remote clients
+relay mode. Start with `dotnet run --project src/Novalist.Sync.Server`. Remote clients
 require HTTPS. The server rejects insecure relay requests before authentication;
 HTTP is accepted only in the Development environment when both socket addresses
 are loopback addresses.
@@ -22,13 +30,21 @@ HTTP listener reachable only by that proxy and expose HTTPS to clients: rejectin
 an HTTP request cannot undo credentials already transmitted over that connection.
 See [ASP.NET Core proxy configuration](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/proxy-load-balancer?view=aspnetcore-10.0).
 
-All WebSocket endpoints require a valid access token in the Authorization header:
+When authentication is required, all WebSocket endpoints require a valid access
+token in the Authorization header. In anonymous mode, the host generates a fresh
+256-bit random capability, encoded as 64 hexadecimal characters, and sends it in
+`X-Novalist-Relay-Host` on its control connection and each route attachment. The
+server retains only its SHA-256 hash in memory, checks it in constant time, and
+discards it when the session ends. The capability must not be logged or included
+in invitation links or query strings. Guests need no relay credential; pinned
+end-to-end TLS and the host's invitation and device checks still control access
+to the project. HTTPS remains required in either mode.
 
 | Endpoint | Purpose |
 | --- | --- |
 | `/relay/v1/host` | Opens the host control connection; the first text message is the new session GUID. Subsequent text messages identify pending guest routes. |
 | `/relay/v1/sessions/{sessionId}/guest` | Opens a guest stream while the host is online. The HTTP upgrade waits for the host to attach. |
-| `/relay/v1/sessions/{sessionId}/routes/{routeId}` | Attaches the host side of a pending guest stream. Only the control connection's issuer and subject can attach. |
+| `/relay/v1/sessions/{sessionId}/routes/{routeId}` | Attaches the host side of a pending guest stream. Requires the control connection's issuer and subject, or its host capability in anonymous mode. |
 
 Control GUIDs use 32 hexadecimal characters. Guest streams carry only binary
 WebSocket frames. Each direction forwards at most 16 KiB per read, awaiting the
@@ -40,8 +56,10 @@ There is no project-sized buffering or participant limit. Closing the control
 socket removes its session and closes all routes. A new host receives a new ID;
 closed session IDs and prior packet data cannot be resumed from this server.
 
-The server sees authenticated issuer/subject, random session/route identifiers,
-connection addresses, byte counts and timings. It never parses the tunneled TCP
+The server sees authenticated issuer/subject when sign-in is required, the host
+capability on anonymous host requests, random session/route identifiers,
+connection addresses, byte counts and timings. It never receives the participant
+display names outside encrypted peer traffic. It never parses the tunneled TCP
 protocol. Clients perform pinned TLS, invitation redemption, membership checks,
 project comparison and file transfer with the hosting desktop. These metadata
 fields replace the persistent protocol's project metadata in relay mode.

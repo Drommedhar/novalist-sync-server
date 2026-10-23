@@ -7,7 +7,9 @@ public static class RelayEndpoints
 {
     public static IEndpointRouteBuilder MapRelayEndpoints(this IEndpointRouteBuilder app)
     {
-        var endpoints = app.MapGroup("/relay/v1").RequireAuthorization();
+        var endpoints = app.MapGroup("/relay/v1");
+        if (RelayAuthentication.Required(app.ServiceProvider.GetRequiredService<IConfiguration>())) endpoints.RequireAuthorization();
+        else endpoints.AllowAnonymous();
         endpoints.MapGet("/host", HostAsync);
         endpoints.MapGet("/sessions/{sessionId:guid}/guest", GuestAsync);
         endpoints.MapGet("/sessions/{sessionId:guid}/routes/{routeId:guid}", AttachAsync);
@@ -17,8 +19,11 @@ public static class RelayEndpoints
     private static async Task HostAsync(HttpContext context, RelaySessions sessions)
     {
         if (!CanUpgrade(context)) return;
+        var anonymous = !RelayAuthentication.Required(context);
+        var proof = anonymous ? RelayAuthentication.HostProof(context) : null;
+        if (anonymous && proof is null) { context.Response.StatusCode = 400; return; }
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
-        var session = sessions.Create(context.User.FindFirst("iss")!.Value, context.User.FindFirst("sub")!.Value);
+        var session = sessions.Create(context.User.FindFirst("iss")?.Value ?? "", context.User.FindFirst("sub")?.Value ?? "", proof);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, session.Stop.Token);
         try
         {
@@ -30,7 +35,7 @@ public static class RelayEndpoints
             await Task.WhenAll(send, receive);
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
-        catch (WebSocketException) { }
+        catch (WebSocketException error) { ReportDisconnect(context, error); }
         finally
         {
             sessions.Remove(session);
@@ -68,7 +73,7 @@ public static class RelayEndpoints
         {
             if (!context.Response.HasStarted) context.Response.StatusCode = 410;
         }
-        catch (WebSocketException) { }
+        catch (WebSocketException error) { ReportDisconnect(context, error); }
         finally
         {
             session.Routes.TryRemove(routeId, out _);
@@ -81,7 +86,7 @@ public static class RelayEndpoints
         if (!CanUpgrade(context)) return;
         var session = sessions.Find(sessionId);
         if (session is null || session.Stop.IsCancellationRequested) { context.Response.StatusCode = 404; return; }
-        if (session.Subject != context.User.FindFirst("sub")!.Value || session.Issuer != context.User.FindFirst("iss")!.Value)
+        if (!RelayAuthentication.Owns(session, context))
         { context.Response.StatusCode = 403; return; }
         if (!session.Routes.TryGetValue(routeId, out var route) || route.Host.Task.IsCompleted)
         { context.Response.StatusCode = 404; return; }
@@ -95,10 +100,15 @@ public static class RelayEndpoints
 
     private static bool CanUpgrade(HttpContext context)
     {
-        if (string.IsNullOrEmpty(context.User.FindFirst("sub")?.Value) || string.IsNullOrEmpty(context.User.FindFirst("iss")?.Value))
+        if (RelayAuthentication.Required(context) &&
+            (string.IsNullOrEmpty(context.User.FindFirst("sub")?.Value) || string.IsNullOrEmpty(context.User.FindFirst("iss")?.Value)))
         { context.Response.StatusCode = 403; return false; }
         if (context.WebSockets.IsWebSocketRequest) return true;
         context.Response.StatusCode = 400;
         return false;
     }
+
+    private static void ReportDisconnect(HttpContext context, WebSocketException error) =>
+        context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Novalist.Sync.Server.Relay")
+            .LogDebug("Relay WebSocket disconnected: {ErrorCode}.", error.WebSocketErrorCode);
 }

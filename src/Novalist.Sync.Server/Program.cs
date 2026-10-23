@@ -45,7 +45,7 @@ builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options => options.MapInboundClaims = false);
 
-if (!builder.Environment.IsDevelopment())
+if (!builder.Environment.IsDevelopment() && RelayAuthentication.Required(builder.Configuration))
 {
     builder.Services
         .AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)

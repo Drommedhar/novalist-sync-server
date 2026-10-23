@@ -10,6 +10,10 @@ the minor version.
 
 ### Added
 
+- `NativeClientConfiguration.AuthenticationRequired` advertises optional relay
+  authentication; omitted values require sign-in for compatibility. Anonymous
+  relay configurations omit the identity-provider settings. Package minor 1.7.0.
+
 - Stable string role names in `ProjectRoles` (`Owner`, `Contributor`, `Viewer`),
   retaining the existing JSON and MessagePack representation of `ProjectMember.Role`.
 - A dedicated `RevokeInvitation` request and shared `Protocol.DeviceRegistrationPath`
