@@ -8,7 +8,7 @@ namespace Novalist.Sync.Server.Updates;
 public sealed class PresenceAccess(SyncDbContext db, DeviceRegistry devices, ProjectAccess projects)
 {
     public async Task DeliverAsync(Guid userId, Guid deviceId, Envelope envelope,
-        Func<Guid, IReadOnlySet<Guid>, Task> deliver, CancellationToken ct)
+        Func<Guid, IReadOnlySet<Guid>, CancellationToken, Task> deliver, CancellationToken ct)
     {
         var header = ValidateEnvelope(deviceId, envelope);
         await devices.EnsureActiveAsync(userId, deviceId, ct);
@@ -30,7 +30,17 @@ public sealed class PresenceAccess(SyncDbContext db, DeviceRegistry devices, Pro
             """).AsNoTracking().ToListAsync(ct);
         if (!recipients.Any(device => device.Id == deviceId))
             throw new AccessDeniedException("The sending device is no longer active.");
-        await deliver(header.ProjectId, recipients.Select(device => device.Id).ToHashSet());
+        using var delivery = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        delivery.CancelAfter(TimeSpan.FromSeconds(1));
+        try
+        {
+            await deliver(header.ProjectId, recipients.Select(device => device.Id).ToHashSet(), delivery.Token);
+            delivery.Token.ThrowIfCancellationRequested();
+        }
+        catch (OperationCanceledException) when (delivery.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            throw new PushRejectedException("Presence delivery timed out.");
+        }
         await transaction.CommitAsync(ct);
     }
 

@@ -37,7 +37,7 @@ public sealed class PresenceConcurrencyTests(DatabaseFixture database)
         var device = removeSender ? guestDevice : ownerDevice;
         var delivered = false;
         var delivery = presence.DeliverAsync(sender, device, TestData.Envelope(project, device, 1, MsgType.Presence),
-            (_, _) => { delivered = true; return Task.CompletedTask; }, ct);
+            (_, _, _) => { delivered = true; return Task.CompletedTask; }, ct);
         try
         {
             await pause.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
@@ -75,12 +75,12 @@ public sealed class PresenceConcurrencyTests(DatabaseFixture database)
         await using var sending = database.CreateContext();
         var presence = new PresenceAccess(sending, new(sending), new(sending));
         var envelope = TestData.Envelope(project, device, 1, MsgType.Presence);
-        var delivery = presence.DeliverAsync(owner.Id, device, envelope, async (id, recipients) =>
+        var delivery = presence.DeliverAsync(owner.Id, device, envelope, async (id, recipients, cancellationToken) =>
         {
             Assert.Equal(project, id);
             Assert.Contains(guestDevice, recipients);
             entered.TrySetResult();
-            await release.Task.WaitAsync(ct);
+            await release.Task.WaitAsync(cancellationToken);
         }, ct);
         try
         {
@@ -92,9 +92,9 @@ public sealed class PresenceConcurrencyTests(DatabaseFixture database)
             await delivery;
             await commit;
             await Assert.ThrowsAsync<PushRejectedException>(() => presence.DeliverAsync(owner.Id, device, envelope,
-                (_, _) => throw new InvalidOperationException("Stale presence was delivered."), ct));
+                (_, _, _) => throw new InvalidOperationException("Stale presence was delivered."), ct));
             var current = envelope with { Header = (EnvelopeHeader.Parse(envelope.Header) with { Epoch = 1 }).ToBytes() };
-            await presence.DeliverAsync(owner.Id, device, current, (_, recipients) =>
+            await presence.DeliverAsync(owner.Id, device, current, (_, recipients, _) =>
             {
                 Assert.Contains(device, recipients);
                 Assert.DoesNotContain(guestDevice, recipients);

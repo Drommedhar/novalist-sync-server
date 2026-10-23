@@ -145,8 +145,9 @@ public sealed partial class SyncHub(
     public async Task PublishPresence(Envelope envelope)
     {
         await EnsureDeviceActiveAsync(Context.ConnectionAborted);
-        await presence.DeliverAsync(UserId, DeviceId, envelope, (projectId, activeDevices) =>
-            Clients.Clients(connections.PresenceRecipients(projectId, activeDevices, Context.ConnectionId)).ReceivePresence(envelope),
+        await presence.DeliverAsync(UserId, DeviceId, envelope, (projectId, activeDevices, cancellationToken) =>
+            ((Hub)this).Clients.Clients(connections.PresenceRecipients(projectId, activeDevices, Context.ConnectionId))
+                .SendCoreAsync(nameof(ISyncClient.ReceivePresence), [envelope], cancellationToken),
             Context.ConnectionAborted);
     }
 

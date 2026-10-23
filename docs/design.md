@@ -569,6 +569,13 @@ to 4096 bytes. Presence never increments `serverSeq` or appears in catch-up.
 Clients throttle outgoing updates, reject stale/replayed presence and expire
 inactive cursors locally. The server does not interpret the encrypted state.
 
+Malformed and unauthorized presence is rejected before opening a transaction.
+Membership and epoch are rechecked under a project lock held through the send.
+The send has a one-second cancellation deadline, passed into SignalR's outbound
+write; cancellation finishes before the transaction releases its locks. A stalled
+recipient therefore cannot hold up project writes indefinitely. A timeout reports
+`Presence delivery timed out.`; clients may send their next fresh presence state.
+
 ### 8.9 Pausing and resuming
 
 - **Pause:** .NET closes the SignalR connection and stops sending. The project
