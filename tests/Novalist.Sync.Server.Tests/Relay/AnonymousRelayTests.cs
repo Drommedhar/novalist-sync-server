@@ -42,8 +42,12 @@ public sealed class AnonymousRelayTests
         Assert.Throws<OptionsValidationException>(() => server.CreateClient());
     }
 
-    [Fact]
-    public async Task AnonymousGuestsExchangePacketsButCannotAttachHostRoutes()
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task AnonymousGuestsExchangePacketsButCannotAttachHostRoutes(bool controlUppercase, bool routeUppercase)
     {
         await using var server = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
@@ -56,9 +60,11 @@ public sealed class AnonymousRelayTests
         deadline.CancelAfter(TimeSpan.FromSeconds(15));
         var ct = deadline.Token;
         Uri Endpoint(string path) => new UriBuilder(new Uri(http.BaseAddress!, path)) { Scheme = "ws" }.Uri;
-        var secret = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
+        var bytes = RandomNumberGenerator.GetBytes(32);
+        bytes[0] = 0xab;
+        var secret = Convert.ToHexStringLower(bytes);
         using var control = new ClientWebSocket();
-        control.Options.SetRequestHeader("X-Novalist-Relay-Host", secret);
+        control.Options.SetRequestHeader("X-Novalist-Relay-Host", controlUppercase ? secret.ToUpperInvariant() : secret);
         await control.ConnectAsync(Endpoint("relay/v1/host"), ct);
         var buffer = new byte[64];
         var message = await control.ReceiveAsync(buffer, ct);
@@ -74,7 +80,7 @@ public sealed class AnonymousRelayTests
         using var missingSecret = new ClientWebSocket();
         await Assert.ThrowsAsync<WebSocketException>(() => missingSecret.ConnectAsync(attach, ct));
         using var host = new ClientWebSocket();
-        host.Options.SetRequestHeader("X-Novalist-Relay-Host", secret);
+        host.Options.SetRequestHeader("X-Novalist-Relay-Host", routeUppercase ? secret.ToUpperInvariant() : secret);
         await host.ConnectAsync(attach, ct);
         await joining;
         await guest.SendAsync(new byte[] { 1, 2, 3 }, WebSocketMessageType.Binary, true, ct);

@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using System.Text;
 
 namespace Novalist.Sync.Server.Relay;
 
@@ -14,7 +13,7 @@ internal static class RelayAuthentication
     {
         var values = context.Request.Headers["X-Novalist-Relay-Host"];
         if (values.Count != 1 || values[0] is not { Length: 64 } value || !value.All(Uri.IsHexDigit)) return null;
-        return SHA256.HashData(Encoding.ASCII.GetBytes(value));
+        return SHA256.HashData(Convert.FromHexString(value));
     }
 
     internal static bool Owns(RelaySession session, HttpContext context) => session.HostProof is { } expected

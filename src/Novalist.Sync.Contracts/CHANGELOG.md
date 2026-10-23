@@ -12,7 +12,9 @@ the minor version.
 
 - `NativeClientConfiguration.AuthenticationRequired` advertises optional relay
   authentication; omitted values require sign-in for compatibility. Anonymous
-  relay configurations omit the identity-provider settings. Package minor 1.7.0.
+  relay configurations omit the identity-provider settings: `Authority`, `ClientId`
+  and `Scope` are now nullable (`string?`), and consumers must handle null values.
+  Package minor 1.7.0.
 
 - Stable string role names in `ProjectRoles` (`Owner`, `Contributor`, `Viewer`),
   retaining the existing JSON and MessagePack representation of `ProjectMember.Role`.

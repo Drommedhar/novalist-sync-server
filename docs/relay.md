@@ -33,9 +33,11 @@ See [ASP.NET Core proxy configuration](https://learn.microsoft.com/en-us/aspnet/
 When authentication is required, all WebSocket endpoints require a valid access
 token in the Authorization header. In anonymous mode, the host generates a fresh
 256-bit random capability, encoded as 64 hexadecimal characters, and sends it in
-`X-Novalist-Relay-Host` on its control connection and each route attachment. The
-server retains only its SHA-256 hash in memory, checks it in constant time, and
-discards it when the session ends. The capability must not be logged or included
+`X-Novalist-Relay-Host` on its control connection and each route attachment.
+Uppercase, lowercase and mixed-case hex encode the same capability. The server
+decodes the 32 bytes before hashing, retains only their SHA-256 hash in memory,
+checks it in constant time, and discards it when the session ends.
+The capability must not be logged or included
 in invitation links or query strings. Guests need no relay credential; pinned
 end-to-end TLS and the host's invitation and device checks still control access
 to the project. HTTPS remains required in either mode.
