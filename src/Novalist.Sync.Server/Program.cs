@@ -26,6 +26,7 @@ else
 
     builder.Services.AddScoped<UpdateLog>();
     builder.Services.AddScoped<PresenceAccess>();
+    builder.Services.AddScoped<FieldLeaseAccess>();
     builder.Services.AddScoped<EphemeralStateCleanup>();
     builder.Services.AddHostedService<EphemeralStateCleanupService>();
 

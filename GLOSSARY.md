@@ -14,3 +14,6 @@ A version of a shared project's encryption keys and authorized devices, started
 when the owner commits a key rotation. A rotation that removes a collaborator
 excludes their devices from the new epoch.
 
+**Field editing lease**:
+A temporary right for one collaborator's device to edit a shared field. Other
+devices wait until that right is released or expires.

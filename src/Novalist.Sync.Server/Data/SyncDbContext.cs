@@ -10,6 +10,8 @@ public sealed class SyncDbContext(DbContextOptions<SyncDbContext> options) : DbC
     public DbSet<Membership> Memberships => Set<Membership>();
     public DbSet<StoredUpdate> Updates => Set<StoredUpdate>();
     public DbSet<Invitation> Invitations => Set<Invitation>();
+    public DbSet<FieldLease> FieldLeases => Set<FieldLease>();
+    public DbSet<FieldLeaseAttempt> FieldLeaseAttempts => Set<FieldLeaseAttempt>();
     public DbSet<ProjectDeviceAuthorization> ProjectDeviceAuthorizations => Set<ProjectDeviceAuthorization>();
     public DbSet<ProjectEpochStage> ProjectEpochStages => Set<ProjectEpochStage>();
     public DbSet<ProjectEpochEnvelope> ProjectEpochEnvelopes => Set<ProjectEpochEnvelope>();
@@ -44,6 +46,19 @@ public sealed class SyncDbContext(DbContextOptions<SyncDbContext> options) : DbC
         {
             entry.HasKey(value => new { value.ProjectId, value.DeviceId, value.Epoch });
             entry.HasOne<Project>().WithMany().HasForeignKey(value => value.ProjectId);
+        });
+        modelBuilder.Entity<FieldLeaseAttempt>(attempt =>
+        {
+            attempt.HasKey(value => new { value.ProjectId, value.DeviceId, value.LeaseId });
+            attempt.HasIndex(value => value.ExpiresAt);
+            attempt.HasOne<Project>().WithMany().HasForeignKey(value => value.ProjectId);
+            attempt.HasOne<Device>().WithMany().HasForeignKey(value => value.DeviceId).OnDelete(DeleteBehavior.Restrict);
+        });
+        modelBuilder.Entity<FieldLease>(lease =>
+        {
+            lease.HasKey(value => new { value.ProjectId, value.ResourceId });
+            lease.HasOne<Project>().WithMany().HasForeignKey(value => value.ProjectId);
+            lease.HasOne<Device>().WithMany().HasForeignKey(value => value.DeviceId).OnDelete(DeleteBehavior.Restrict);
         });
         modelBuilder.Entity<User>(user =>
         {
