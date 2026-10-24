@@ -13,6 +13,7 @@ public sealed partial class SyncHub(
     DeviceRegistry devices,
     DeviceProofServer proofs,
     ProjectAccess projects,
+    AccessRevocation revocation,
     InvitationAccess invitations,
     UpdateLog updateLog,
     ConnectionRegistry connections,
@@ -98,6 +99,7 @@ public sealed partial class SyncHub(
         try
         {
             await projects.EnsureCanReadAsync(UserId, projectId, cancellationToken);
+            connections.JoinProject(Context.ConnectionId, projectId);
         }
         catch
         {
@@ -108,6 +110,7 @@ public sealed partial class SyncHub(
 
     public Task LeaveProject(Guid projectId)
     {
+        connections.LeaveProject(Context.ConnectionId, projectId);
         return Groups.RemoveFromGroupAsync(Context.ConnectionId, ProjectGroup(projectId), Context.ConnectionAborted);
     }
 
@@ -152,6 +155,7 @@ public sealed partial class SyncHub(
 
         await foreach (var update in updateLog.ReadAfterAsync(projectId, afterServerSeq, cancellationToken))
         {
+            if (connections.ProjectRevoked(Context.ConnectionId, projectId)) throw new HubException("Access to this shared project has ended.");
             yield return update;
         }
     }
