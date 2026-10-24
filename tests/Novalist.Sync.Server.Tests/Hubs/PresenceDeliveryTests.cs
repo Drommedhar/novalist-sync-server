@@ -36,7 +36,7 @@ public sealed class PresenceDeliveryTests(DatabaseFixture database)
         if (!validEnvelope) envelope = envelope with { Nonce = new byte[23] };
         var error = await Assert.ThrowsAsync<HubException>(() => hub.InvokeAsync("PublishPresence", envelope, ct));
         Assert.Contains(member ? "Invalid presence envelope" : "not a member", error.Message);
-        Assert.DoesNotContain("256", error.Message);
+        Assert.DoesNotContain("Presence is limited to", error.Message);
     }
 
     [Fact]
