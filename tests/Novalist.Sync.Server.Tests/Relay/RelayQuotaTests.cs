@@ -10,10 +10,11 @@ public sealed class RelayQuotaTests
     public void RejectedAttachmentDoesNotReserveAnAdditionalIdentity()
     {
         var clock = new QuotaClock();
-        var quotas = new RelayQuotas(Options.Create(new RelayOptions { RequestsPerMinute = 2, MaxRoutesPerIp = 1 }), clock);
+        var quotas = new RelayQuotas(Options.Create(new RelayOptions { RequestsPerMinute = 3, MaxRoutesPerIp = 1 }), clock);
         var owner = new RelayIdentity("192.0.2.1", "issuer", "owner");
         var attached = owner with { Address = "192.0.2.2" };
         using var route = Reserve(quotas, false, owner);
+        Assert.True(quotas.RequestUpgrade());
         Assert.True(quotas.RequestUpgrade());
         Assert.True(quotas.RequestUpgrade());
         Assert.Equal(429, quotas.AdmitRouteAttachment(route, attached));
@@ -21,6 +22,7 @@ public sealed class RelayQuotaTests
         unrelated.Dispose();
         clock.Advance(TimeSpan.FromMinutes(1));
         Assert.Equal(0, quotas.AdmitRouteAttachment(route, attached));
+        Assert.True(quotas.RequestUpgrade());
         Assert.True(quotas.RequestUpgrade());
         Assert.False(quotas.RequestUpgrade());
         route.Dispose();
@@ -30,11 +32,12 @@ public sealed class RelayQuotaTests
     [Fact]
     public void IdentityQuotaRejectionDoesNotConsumeAGlobalUpgradeToken()
     {
-        var quotas = new RelayQuotas(Options.Create(new RelayOptions { RequestsPerMinute = 2, MaxRoutesPerIp = 1 }), TimeProvider.System);
+        var quotas = new RelayQuotas(Options.Create(new RelayOptions { RequestsPerMinute = 3, MaxRoutesPerIp = 1 }), TimeProvider.System);
         var owner = new RelayIdentity("192.0.2.1", "issuer", "owner");
         using var route = Reserve(quotas, false, owner);
         using var occupied = Reserve(quotas, false, new RelayIdentity("192.0.2.2", "issuer", "other"));
         Assert.Equal(429, quotas.AdmitRouteAttachment(route, owner with { Address = "192.0.2.2" }));
+        Assert.True(quotas.RequestUpgrade());
         Assert.True(quotas.RequestUpgrade());
         Assert.True(quotas.RequestUpgrade());
         Assert.False(quotas.RequestUpgrade());

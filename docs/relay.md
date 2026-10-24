@@ -84,8 +84,9 @@ IP's bandwidth allowance.
 
 All settings below are under `Relay` (for example,
 `Relay__MaxRoutesPerSession=16` in environment variables). Values must be positive;
-invalid limits prevent startup. The global upgrade allowance must be at least two
-so both sides of a route can connect. Byte limits must allow at least one 16 KiB packet.
+invalid limits prevent startup. The global upgrade allowance must be at least three
+for the host control connection and both sides of its first route. Byte limits
+must allow at least one 16 KiB packet.
 
 | Setting | Default | Applies to |
 | --- | ---: | --- |
