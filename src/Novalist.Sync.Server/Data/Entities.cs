@@ -60,6 +60,15 @@ public sealed class StoredUpdate
     public DateTimeOffset ReceivedAt { get; set; }
 }
 
+public sealed class Invitation
+{
+    public Guid Id { get; set; }
+    public Guid ProjectId { get; set; }
+    public DateTimeOffset ExpiresAt { get; set; }
+    public Guid? RedeemedBy { get; set; }
+    public Guid? ActivatedDeviceId { get; set; }
+    public byte[]? CertificateHash { get; set; }
+}
 
 
 

@@ -13,6 +13,7 @@ public sealed partial class SyncHub(
     DeviceRegistry devices,
     DeviceProofServer proofs,
     ProjectAccess projects,
+    InvitationAccess invitations,
     UpdateLog updateLog,
     ConnectionRegistry connections,
     ILogger<SyncHub> logger) : Hub<ISyncClient>, ISyncHub

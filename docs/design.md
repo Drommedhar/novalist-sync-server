@@ -541,6 +541,23 @@ deduplication of retries (`senderSeq`) and catch-up all depend on it.
    — new members see full history by default.
 4. Server records membership.
 
+The implemented membership API also supports a single-use invitation link.
+An owner POSTs `CreateInvitation` to `/projects/{projectId}/invitations`, with
+a client-generated, cryptographically random UUID and an expiry no more than
+seven days away. A signed-in recipient POSTs `RedeemInvitation` to
+`/invitations/redeem`. The first account to claim it becomes a contributor;
+concurrent claims by other accounts fail. The same account can retry while
+the invitation is valid and its membership still exists. An owner can POST
+the identifier to `/projects/{projectId}/invitations/revoke` to invalidate it.
+Revocation does not remove an already admitted member; membership removal
+is a separate operation. Revoked identifiers cannot be reused.
+
+Invitation identifiers are bearer capabilities. Send them in authenticated
+request bodies, never in HTTP URLs or logs. Clients must keep the link's
+encryption material separate: these endpoints grant server access only and
+do not implement device verification, epoch-key distribution or rotation.
+The §8.5 key-distribution requirements still apply before editing.
+
 ### 8.6 Key verification
 
 ```
@@ -625,13 +642,14 @@ MIME types and keys are only visible inside the encrypted manifest.
 | `devices`      | deviceId, userId, public keys, linking deviceId and signature | public keys only |
 | `projects`     | projectId, current epoch, epoch start time                     | yes              |
 | `memberships`  | projectId, userId, role (owner, contributor, viewer)           | yes              |
+| `invitations` | invitationId, projectId, expiry, claimant account/device, opaque certificate fingerprint | metadata; no keys |
 | `wrapped_keys` | §6.3 records                                                   | no               |
 | `updates`      | serverSeq, header, nonce, ciphertext, signature                | header only      |
 | `snapshots`    | coversServerSeq, timestamp, envelope                           | header only      |
 | `blob_chunks`  | blobId, index, ciphertext                                      | no               |
 
 Visible metadata: project and item counts, member lists, devices, timestamps,
-edit frequency per item, sizes.
+edit frequency per item, sizes, invitation expiry and claimant identities.
 
 Device authentication adds immutable 32-byte Ed25519 and X25519 public keys to
 device records, plus the linking device ID and its public signature when linked.
@@ -660,6 +678,20 @@ with their selected endpoint and sign their own canonical endpoint. This prevent
 a server from relaying a proof to another server accepting the same OIDC token.
 Changing the public endpoint requires clients to select the new canonical URL.
 
+The invitation API additionally stores invitation identifiers, project IDs,
+expiry times and the claiming account ID. No project keys, names, paths or
+content are part of invitation requests or responses. Invitation identifiers
+are access capabilities and must not be included in diagnostics.
+
+The verified `ActivateInvitation` hub operation additionally stores the claiming
+device UUID and an opaque 32-byte certificate fingerprint. It never receives or
+interprets the certificate or private invitation material. Account admission and
+this activation receipt commit together. The same still-active account/device
+can retrieve the same receipt after expiry (including when the original reply
+was lost); changed fingerprints/devices, revoked devices and removed memberships
+are rejected. Revoking a link stops an unclaimed invitation; it does not erase
+an already-committed receipt or remove an existing collaborator.
+
 Project names, item names and paths are **not** stored in `projects` or anywhere
 else on the server; they live in the encrypted structure doc (§5.1).
 
@@ -671,8 +703,8 @@ which never change; email and username are optional, refreshed from the token's
 claims, and only used to find people when inviting them (§8.5).
 
 OIDC authenticates the **user**, not the device. Verified devices additionally
-answer a fresh `GetDeviceChallenge` using `AuthenticateDevice` before project
-or update operations. Public keys cannot be replaced under
+answer a fresh `GetDeviceChallenge` using `AuthenticateDevice` before project,
+update or invitation operations. Public keys cannot be replaced under
 an existing device ID. The first verified registration serializes on the account
 and requires fresh MFA bound to both ordinary and recovery public-key records.
 The client obtains a five-minute, one-use enrollment challenge, then uses its
@@ -695,8 +727,9 @@ account after the cutover using an earlier eligibility check.
 
 Legacy clients continue to work for accounts with no verified devices. Registering
 the first verified device opts that account into possession checks and closes its
-existing connections. Legacy device registration and access HTTP endpoints
-then reject that account. This prevents falling back to UUID-only access after revocation.
+existing connections. Legacy device registration, access and invitation HTTP
+endpoints then reject that account. Its invitations use the authenticated hub
+methods instead. This prevents falling back to UUID-only access after revocation.
 
 The server is pointed at the provider through configuration (environment
 variables, never `appsettings*.json`):

@@ -65,6 +65,47 @@ namespace Novalist.Sync.Server.Migrations
                     b.ToTable("devices", (string)null);
                 });
 
+            modelBuilder.Entity("Novalist.Sync.Server.Data.Invitation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid?>("ActivatedDeviceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("activated_device_id");
+
+                    b.Property<byte[]>("CertificateHash")
+                        .HasColumnType("bytea")
+                        .HasColumnName("certificate_hash");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("project_id");
+
+                    b.Property<Guid?>("RedeemedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("redeemed_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_invitations");
+
+                    b.HasIndex("ActivatedDeviceId")
+                        .HasDatabaseName("ix_invitations_activated_device_id");
+
+                    b.HasIndex("ProjectId")
+                        .HasDatabaseName("ix_invitations_project_id");
+
+                    b.HasIndex("RedeemedBy")
+                        .HasDatabaseName("ix_invitations_redeemed_by");
+
+                    b.ToTable("invitations", (string)null);
+                });
+
             modelBuilder.Entity("Novalist.Sync.Server.Data.Membership", b =>
                 {
                     b.Property<Guid>("ProjectId")
@@ -225,6 +266,28 @@ namespace Novalist.Sync.Server.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_devices_users_user_id");
+                });
+
+            modelBuilder.Entity("Novalist.Sync.Server.Data.Invitation", b =>
+                {
+                    b.HasOne("Novalist.Sync.Server.Data.Device", null)
+                        .WithMany()
+                        .HasForeignKey("ActivatedDeviceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_invitations_devices_activated_device_id");
+
+                    b.HasOne("Novalist.Sync.Server.Data.Project", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_invitations_projects_project_id");
+
+                    b.HasOne("Novalist.Sync.Server.Data.User", null)
+                        .WithMany()
+                        .HasForeignKey("RedeemedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_invitations_users_redeemed_by");
                 });
 
             modelBuilder.Entity("Novalist.Sync.Server.Data.Membership", b =>
