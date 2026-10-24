@@ -7,6 +7,40 @@ namespace Novalist.Sync.Server.Tests.Relay;
 public sealed class RelayQuotaTests
 {
     [Fact]
+    public void RejectedAttachmentDoesNotReserveAnAdditionalIdentity()
+    {
+        var clock = new QuotaClock();
+        var quotas = new RelayQuotas(Options.Create(new RelayOptions { RequestsPerMinute = 2, MaxRoutesPerIp = 1 }), clock);
+        var owner = new RelayIdentity("192.0.2.1", "issuer", "owner");
+        var attached = owner with { Address = "192.0.2.2" };
+        using var route = Reserve(quotas, false, owner);
+        Assert.True(quotas.RequestUpgrade());
+        Assert.True(quotas.RequestUpgrade());
+        Assert.Equal(429, quotas.AdmitRouteAttachment(route, attached));
+        using var unrelated = Reserve(quotas, false, attached with { Subject = "other" });
+        unrelated.Dispose();
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(0, quotas.AdmitRouteAttachment(route, attached));
+        Assert.True(quotas.RequestUpgrade());
+        Assert.False(quotas.RequestUpgrade());
+        route.Dispose();
+        using var replacement = Reserve(quotas, false, attached);
+    }
+
+    [Fact]
+    public void IdentityQuotaRejectionDoesNotConsumeAGlobalUpgradeToken()
+    {
+        var quotas = new RelayQuotas(Options.Create(new RelayOptions { RequestsPerMinute = 2, MaxRoutesPerIp = 1 }), TimeProvider.System);
+        var owner = new RelayIdentity("192.0.2.1", "issuer", "owner");
+        using var route = Reserve(quotas, false, owner);
+        using var occupied = Reserve(quotas, false, new RelayIdentity("192.0.2.2", "issuer", "other"));
+        Assert.Equal(429, quotas.AdmitRouteAttachment(route, owner with { Address = "192.0.2.2" }));
+        Assert.True(quotas.RequestUpgrade());
+        Assert.True(quotas.RequestUpgrade());
+        Assert.False(quotas.RequestUpgrade());
+    }
+
+    [Fact]
     public void ConcurrentReservationsEnforceAccountAndIpLimitsAndReleaseOnce()
     {
         var quotas = new RelayQuotas(Options.Create(new RelayOptions { MaxSessionsPerIp = 4, MaxSessionsPerAccount = 4 }), TimeProvider.System);
@@ -103,12 +137,12 @@ public sealed class RelayQuotaTests
         var quotas = new RelayQuotas(Options.Create(new RelayOptions { MaxRoutes = 1, MaxRoutesPerIp = 1, MaxRoutesPerAccount = 1 }), TimeProvider.System);
         var owner = new RelayIdentity("192.0.2.1", "issuer", "owner");
         using var route = Reserve(quotas, false, owner);
-        Assert.Equal(0, quotas.ExtendRoute(route, owner));
-        Assert.Equal(0, quotas.ExtendRoute(route, owner with { Address = "192.0.2.2" }));
-        Assert.Equal(0, quotas.ExtendRoute(route, owner with { Address = "192.0.2.2" }));
+        Assert.Equal(0, quotas.AdmitRouteAttachment(route, owner));
+        Assert.Equal(0, quotas.AdmitRouteAttachment(route, owner with { Address = "192.0.2.2" }));
+        Assert.Equal(0, quotas.AdmitRouteAttachment(route, owner with { Address = "192.0.2.2" }));
         Assert.Equal(3, quotas.EntryCount);
         route.Dispose();
-        Assert.Equal(410, quotas.ExtendRoute(route, owner));
+        Assert.Equal(410, quotas.AdmitRouteAttachment(route, owner));
         using var next = Reserve(quotas, false, owner with { Address = "192.0.2.2" });
     }
 

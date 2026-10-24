@@ -19,6 +19,7 @@ internal sealed class RelayTestServer : WebApplicationFactory<Program>
     private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? response;
     private readonly bool anonymous;
     private readonly bool realIntrospection;
+    private readonly TimeProvider? clock;
     private readonly CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
     public CancellationToken Token => deadline.Token;
     public Uri Address { get; }
@@ -26,13 +27,15 @@ internal sealed class RelayTestServer : WebApplicationFactory<Program>
 
     public RelayTestServer(Action<RelayOptions>? configure = null, bool anonymous = false,
         Action<RelayIntrospectionOptions>? introspection = null,
-        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? response = null, bool realIntrospection = false)
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? response = null, bool realIntrospection = false,
+        TimeProvider? clock = null)
     {
         this.configure = configure;
         this.anonymous = anonymous;
         this.introspection = introspection;
         this.response = response;
         this.realIntrospection = realIntrospection;
+        this.clock = clock;
         deadline.CancelAfter(TimeSpan.FromSeconds(15));
         UseKestrel(0);
         using var client = CreateClient();
@@ -50,6 +53,7 @@ internal sealed class RelayTestServer : WebApplicationFactory<Program>
         builder.ConfigureServices(services =>
         {
             if (configure is not null) services.PostConfigure(configure);
+            if (clock is not null) services.AddSingleton(clock);
             if (introspection is not null) services.PostConfigure(introspection);
             if (!realIntrospection) services.AddHttpClient("RelayIntrospection")
                     .ConfigurePrimaryHttpMessageHandler(() => new RelayIntrospectionHandler(response));

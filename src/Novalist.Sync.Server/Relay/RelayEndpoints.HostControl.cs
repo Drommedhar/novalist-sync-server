@@ -14,7 +14,7 @@ public static partial class RelayEndpoints
         {
             session.Close();
             await lifetime.CancelAsync();
-            await CloseHostControlAsync(context, socket, (send, receive), lifetime.AuthorizationEnded);
+            await CloseHostControlAsync(context, socket, (send, receive), lifetime.TokenState);
             await io.CancelAsync();
             try { await Task.WhenAll(send, receive); }
             catch (OperationCanceledException) when (io.IsCancellationRequested) { }
@@ -22,7 +22,7 @@ public static partial class RelayEndpoints
         }
     }
 
-    private static async Task CloseHostControlAsync(HttpContext context, WebSocket socket, (Task Send, Task Receive) pending, bool authorizationEnded)
+    private static async Task CloseHostControlAsync(HttpContext context, WebSocket socket, (Task Send, Task Receive) pending, RelayTokenState tokenState)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
         deadline.CancelAfter(TimeSpan.FromSeconds(1));
@@ -32,9 +32,13 @@ public static partial class RelayEndpoints
             catch (OperationCanceledException) when (!deadline.IsCancellationRequested) { }
             if (socket.State is not (WebSocketState.Open or WebSocketState.CloseReceived)) return;
             var shutdown = context.RequestServices.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.IsCancellationRequested;
-            var status = authorizationEnded ? WebSocketCloseStatus.PolicyViolation
-                : shutdown ? WebSocketCloseStatus.EndpointUnavailable : WebSocketCloseStatus.NormalClosure;
-            var reason = authorizationEnded ? "Relay authorization ended." : shutdown ? "Relay shutting down." : "Relay session closed.";
+            var (status, reason) = tokenState switch
+            {
+                RelayTokenState.Inactive => (WebSocketCloseStatus.PolicyViolation, "Relay authorization ended."),
+                RelayTokenState.Unavailable => (WebSocketCloseStatus.EndpointUnavailable, "Relay authorization service unavailable."),
+                _ when shutdown => (WebSocketCloseStatus.EndpointUnavailable, "Relay shutting down."),
+                _ => (WebSocketCloseStatus.NormalClosure, "Relay session closed.")
+            };
             await socket.CloseOutputAsync(status, reason, deadline.Token);
             await pending.Receive.WaitAsync(deadline.Token);
         }

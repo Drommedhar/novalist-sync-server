@@ -22,14 +22,18 @@ internal sealed class RelayTestClock : TimeProvider
 
     public void Advance(TimeSpan duration)
     {
-        ClockTimer[] ready;
-        lock (gate)
+        lock (gate) now += duration;
+        while (true)
         {
-            now += duration;
-            ready = timers.Where(timer => timer.Due <= now).ToArray();
-            foreach (var timer in ready) timer.Due = timer.Period > TimeSpan.Zero ? now + timer.Period : DateTimeOffset.MaxValue;
+            ClockTimer? ready;
+            lock (gate)
+            {
+                ready = timers.Where(timer => timer.Due <= now).MinBy(timer => timer.Due);
+                if (ready is null) return;
+                ready.Due = ready.Period > TimeSpan.Zero ? ready.Due + ready.Period : DateTimeOffset.MaxValue;
+            }
+            ready.Fire();
         }
-        foreach (var timer in ready) timer.Fire();
     }
 
     private sealed class ClockTimer(RelayTestClock clock, TimerCallback callback, object? state) : ITimer

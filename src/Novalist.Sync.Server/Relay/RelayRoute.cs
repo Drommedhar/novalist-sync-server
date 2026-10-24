@@ -30,6 +30,12 @@ internal sealed class RelayRoute(RelayReservation reservation)
         lock (gate) return !completed && claimed && Host.TrySetResult(socket);
     }
 
+    public void ReleaseClaim()
+    {
+        lock (gate)
+            if (!completed && !Host.Task.IsCompletedSuccessfully) claimed = false;
+    }
+
     public void Complete()
     {
         lock (gate)

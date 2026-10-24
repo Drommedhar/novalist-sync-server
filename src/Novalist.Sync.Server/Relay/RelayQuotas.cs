@@ -67,11 +67,12 @@ internal sealed class RelayQuotas
         }
     }
 
-    public int ExtendRoute(RelayReservation reservation, RelayIdentity identity)
+    public int AdmitRouteAttachment(RelayReservation reservation, RelayIdentity identity)
     {
         lock (gate)
         {
             if (reservation.IsDisposed) return 410;
+            if (requests.Available(clock.GetUtcNow()) < 1) return 429;
             var keys = identity.Keys().Where(key => !reservation.Keys.Contains(key)).ToArray();
             var quotas = Resolve(keys, clock.GetUtcNow());
             if (quotas is null) return 503;
@@ -82,6 +83,7 @@ internal sealed class RelayQuotas
                 reservation.Keys.Add(key);
                 reservation.Quotas.Add(quota);
             }
+            requests.Consume(1);
             return 0;
         }
     }

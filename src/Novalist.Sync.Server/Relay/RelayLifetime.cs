@@ -8,10 +8,10 @@ internal sealed class RelayLifetime : IAsyncDisposable
     private readonly CancellationTokenSource stop;
     private readonly Task expiry;
     private readonly Task monitor;
-    private int authorizationEnded;
+    private int tokenState;
     public CancellationToken Token => stop.Token;
     public bool IsCancellationRequested => stop.IsCancellationRequested;
-    public bool AuthorizationEnded => Volatile.Read(ref authorizationEnded) != 0;
+    public RelayTokenState TokenState => (RelayTokenState)Volatile.Read(ref tokenState);
 
     public RelayLifetime(HttpContext context, CancellationToken session = default, CancellationToken route = default)
     {
@@ -33,14 +33,14 @@ internal sealed class RelayLifetime : IAsyncDisposable
         try
         {
             await RelayTokenExpiry.WaitAsync(ExpiresAt(context), context.RequestServices.GetRequiredService<TimeProvider>(), stop.Token);
-            await EndAuthorizationAsync();
+            await EndAsync(RelayTokenState.Inactive);
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
     }
 
-    private Task EndAuthorizationAsync()
+    private Task EndAsync(RelayTokenState state)
     {
-        Volatile.Write(ref authorizationEnded, 1);
+        Interlocked.CompareExchange(ref tokenState, (int)state, (int)RelayTokenState.Active);
         return stop.CancelAsync();
     }
 
@@ -54,8 +54,9 @@ internal sealed class RelayLifetime : IAsyncDisposable
             while (true)
             {
                 await Task.Delay(TimeSpan.FromSeconds(interval), clock, stop.Token);
-                if (await service.CheckAsync(context, stop.Token) == RelayTokenState.Active) continue;
-                await EndAuthorizationAsync();
+                var state = await service.CheckAsync(context, stop.Token);
+                if (state == RelayTokenState.Active) continue;
+                await EndAsync(state);
                 return;
             }
         }

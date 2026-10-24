@@ -66,7 +66,8 @@ socket removes its session and closes all routes. A new host receives a new ID;
 closed session IDs and prior packet data cannot be resumed from this server.
 When the control socket is writable, shutdown sends a WebSocket close frame and
 allows one second for acknowledgement. Authorization expiry or revocation uses
-status 1008 (`PolicyViolation`); a server shutdown uses 1001 (`EndpointUnavailable`),
+status 1008 (`PolicyViolation`); an unavailable introspection provider or server
+shutdown uses 1001 (`EndpointUnavailable`),
 and a normal host disconnect uses 1000 (`NormalClosure`). Broken or unresponsive
 sockets are aborted after that bounded attempt.
 
@@ -83,7 +84,8 @@ IP's bandwidth allowance.
 
 All settings below are under `Relay` (for example,
 `Relay__MaxRoutesPerSession=16` in environment variables). Values must be positive;
-invalid limits prevent startup. Byte limits must allow at least one 16 KiB packet.
+invalid limits prevent startup. The global upgrade allowance must be at least two
+so both sides of a route can connect. Byte limits must allow at least one 16 KiB packet.
 
 | Setting | Default | Applies to |
 | --- | ---: | --- |
@@ -127,6 +129,9 @@ or route returns 404, an incorrect host identity/capability returns 403, and an
 unattached route that times out or loses its host returns 410. Requests without
 required authentication return 401. Limits are enforced before new requests
 reach the hosting desktop; that desktop also caps its simultaneous attachments.
+If host attachment admission hits a quota, the guest remains pending and the host
+can retry the same route until its original attachment deadline. Rejected
+attachments do not reserve additional identities or spend a global upgrade token.
 
 The server sees authenticated issuer/subject when sign-in is required, the host
 capability on anonymous host requests, random session/route identifiers,

@@ -95,6 +95,8 @@ public sealed class RelayIntrospectionTests
         await server.ReadIdAsync(control);
         Interlocked.Exchange(ref unavailable, 1);
         await server.ClosedAsync(control);
+        Assert.Equal(System.Net.WebSockets.WebSocketCloseStatus.EndpointUnavailable, control.CloseStatus);
+        Assert.Equal("Relay authorization service unavailable.", control.CloseStatusDescription);
         await server.RejectedAsync("host", HttpStatusCode.ServiceUnavailable);
     }
 

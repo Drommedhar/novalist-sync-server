@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Options;
 using Novalist.Sync.Server.Tests.Infrastructure;
 
 namespace Novalist.Sync.Server.Tests.Relay;
@@ -9,14 +10,29 @@ namespace Novalist.Sync.Server.Tests.Relay;
 public sealed class RelayAdmissionTests
 {
     [Fact]
+    public async Task GlobalUpgradeAllowanceMustAdmitBothSidesOfARoute()
+    {
+        await using var server = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Development");
+            builder.UseSetting("Relay:RequireAuthentication", "false");
+            builder.UseSetting("Relay:RequestsPerMinute", "1");
+        });
+        Assert.Contains("RequestsPerMinute", Assert.Throws<OptionsValidationException>(() => server.CreateClient()).Message);
+    }
+
+    [Fact]
     public async Task UnauthenticatedTrafficCannotConsumeTheGlobalUpgradeAllowance()
     {
-        await using var server = new RelayTestServer(options => options.RequestsPerMinute = 1);
+        await using var server = new RelayTestServer(options => options.RequestsPerMinute = 2);
         await server.RejectedAsync("host", HttpStatusCode.Unauthorized, null);
         await server.RejectedAsync("host", HttpStatusCode.Unauthorized, null);
         using var control = server.Socket();
         await server.ConnectAsync(control, "host");
         await server.ReadIdAsync(control);
+        using var second = server.Socket("second");
+        await server.ConnectAsync(second, "host");
+        await server.ReadIdAsync(second);
         await server.RejectedAsync("host", HttpStatusCode.TooManyRequests, "other");
     }
 
@@ -25,13 +41,16 @@ public sealed class RelayAdmissionTests
     {
         await using var server = new RelayTestServer(options =>
         {
-            options.RequestsPerMinute = 1;
+            options.RequestsPerMinute = 2;
             options.RequestsPerMinutePerAccount = 1;
         });
         using var client = server.CreateClient();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", TestTokens.Create("owner"));
-        using var response = await client.GetAsync("/relay/v1/host", server.Token);
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        foreach (var _ in Enumerable.Range(0, 2))
+        {
+            using var response = await client.GetAsync("/relay/v1/host", server.Token);
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
         using var control = server.Socket();
         await server.ConnectAsync(control, "host");
         await server.ReadIdAsync(control);
@@ -40,7 +59,8 @@ public sealed class RelayAdmissionTests
     [Fact]
     public async Task InvalidRoutesDoNotConsumeTheGlobalUpgradeAllowance()
     {
-        await using var server = new RelayTestServer(options => options.RequestsPerMinute = 1);
+        await using var server = new RelayTestServer(options => options.RequestsPerMinute = 2);
+        await server.RejectedAsync($"sessions/{Guid.NewGuid()}/guest", HttpStatusCode.NotFound);
         await server.RejectedAsync($"sessions/{Guid.NewGuid()}/guest", HttpStatusCode.NotFound);
         using var control = server.Socket();
         await server.ConnectAsync(control, "host");
@@ -50,7 +70,7 @@ public sealed class RelayAdmissionTests
     [Theory]
     [InlineData("192.0.2.1", 429)]
     [InlineData("192.0.2.2", 503)]
-    public async Task PerIpExhaustionAndQuotaTableExhaustionHaveDistinctStatuses(string secondAddress, int expected)
+    public async Task PreauthenticationIpLimitsRejectOrdinaryHttpBeforeUpgradeValidation(string secondAddress, int expected)
     {
         await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
