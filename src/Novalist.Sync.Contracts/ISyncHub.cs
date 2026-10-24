@@ -16,6 +16,7 @@ public interface ISyncHub
     Task LeaveProject(Guid projectId);
 
     Task<long> Push(Envelope envelope);
+    Task PublishPresence(Envelope envelope);
 
     Task CreateProject(Guid projectId);
 
