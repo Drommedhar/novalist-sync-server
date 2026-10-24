@@ -36,6 +36,7 @@ else
     builder.Services.AddSingleton<DeviceEnrollmentTokens>();
     builder.Services.AddScoped<VerifiedDeviceEnrollment>();
     builder.Services.AddScoped<ProjectAccess>();
+    builder.Services.AddScoped<InvitationAccess>();
     builder.Services.AddSingleton(TimeProvider.System);
     builder.Services.AddSingleton<ConnectionRegistry>();
     builder.Services.AddScoped<AccessRevocation>();
@@ -77,6 +78,7 @@ else
     app.MapDeviceEndpoints();
     app.MapVerifiedDeviceEndpoints();
     app.MapDeviceEnrollmentEndpoint();
+    app.MapInvitationEndpoints();
 }
 app.MapNativeClientEndpoint();
 
