@@ -56,6 +56,7 @@ public sealed partial class ProjectEpochAccess
         await CopyCheckpointAsync(user, stage, ct);
         await db.Memberships.Where(value => value.ProjectId == project.Id && value.UserId == request.RemovedMemberId).ExecuteDeleteAsync(ct);
         await db.Invitations.Where(value => value.ProjectId == project.Id).ExecuteUpdateAsync(set => set.SetProperty(value => value.ExpiresAt, DateTimeOffset.UnixEpoch), ct);
+        await db.FieldLeases.Where(value => value.ProjectId == project.Id).ExecuteDeleteAsync(ct);
         await db.ProjectDeviceAuthorizations.Where(value => value.ProjectId == project.Id && db.Devices.Any(d => d.Id == value.DeviceId && d.UserId == request.RemovedMemberId)).ExecuteDeleteAsync(ct);
         await db.SaveChangesAsync(ct);
         await db.ProjectEpochStages.Where(value => value.ProjectId == project.Id).ExecuteDeleteAsync(ct);
