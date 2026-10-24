@@ -13,6 +13,7 @@ public sealed partial class SyncHub(
     DeviceRegistry devices,
     DeviceProofServer proofs,
     ProjectAccess projects,
+    AccessRevocation revocation,
     InvitationAccess invitations,
     UpdateLog updateLog,
     ConnectionRegistry connections,
@@ -103,6 +104,7 @@ public sealed partial class SyncHub(
         try
         {
             await projects.EnsureCanReadAsync(UserId, projectId, cancellationToken);
+            connections.JoinProject(Context.ConnectionId, projectId);
         }
         catch
         {
@@ -113,6 +115,7 @@ public sealed partial class SyncHub(
 
     public Task LeaveProject(Guid projectId)
     {
+        connections.LeaveProject(Context.ConnectionId, projectId);
         return Groups.RemoveFromGroupAsync(Context.ConnectionId, ProjectGroup(projectId), Context.ConnectionAborted);
     }
 

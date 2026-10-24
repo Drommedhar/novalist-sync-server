@@ -21,10 +21,24 @@ public sealed class AccessRevocation(
     public async Task RemoveMemberAsync(Guid ownerId, Guid projectId, Guid memberId,
         CancellationToken cancellationToken)
     {
-        await projects.RemoveMemberAsync(ownerId, projectId, memberId, cancellationToken, async () =>
+        await projects.RemoveMemberAsync(ownerId, projectId, memberId, cancellationToken,
+            () => NotifyRemovedAsync(projectId, memberId, CancellationToken.None));
+    }
+
+    public async Task NotifyRemovedAsync(Guid projectId, Guid memberId, CancellationToken cancellationToken)
+    {
+        connections.RevokeProject(memberId, projectId);
+        foreach (var connectionId in connections.ConnectionIdsOf(memberId))
         {
-            foreach (var connectionId in connections.ConnectionIdsOf(memberId))
-                await hub.Groups.RemoveFromGroupAsync(connectionId, SyncHub.ProjectGroup(projectId), CancellationToken.None);
-        });
+            await hub.Groups.RemoveFromGroupAsync(connectionId, SyncHub.ProjectGroup(projectId), cancellationToken);
+            await hub.Clients.Client(connectionId).ProjectAccessEnded(projectId);
+        }
+    }
+
+    public async Task DeleteProjectAsync(Guid ownerId, Guid projectId, CancellationToken ct)
+    {
+        var users = await projects.DeleteAsync(ownerId, projectId, ct);
+        foreach (var user in users)
+            await NotifyRemovedAsync(projectId, user, ct);
     }
 }

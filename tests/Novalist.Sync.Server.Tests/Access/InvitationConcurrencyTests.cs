@@ -10,6 +10,37 @@ namespace Novalist.Sync.Server.Tests.Access;
 
 public sealed class InvitationConcurrencyTests(DatabaseFixture database)
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ProjectDeletionCannotLeaveAnInvitationBehind(bool deleteFirst)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var owner = await database.CreateUserAsync();
+        var project = await database.CreateProjectAsync((owner.Id, MembershipRole.Owner));
+        var invitation = new CreateInvitation(Guid.NewGuid(), DateTimeOffset.UtcNow.AddHours(1));
+        var pause = new SqlCommandPause(deleteFirst ? "DELETE FROM invitations" : "INSERT INTO invitations");
+        await using var first = database.CreateContext(pause);
+        await using var second = database.CreateContext();
+        await second.Database.OpenConnectionAsync(ct);
+        var process = ((NpgsqlConnection)second.Database.GetDbConnection()).ProcessID;
+        Task Create(SyncDbContext db) => new InvitationAccess(db, new(db, database.DeliveryGate), TimeProvider.System).CreateAsync(owner.Id, project, invitation, ct);
+        Task Delete(SyncDbContext db) => new ProjectAccess(db, database.DeliveryGate).DeleteAsync(owner.Id, project, ct);
+        var initial = deleteFirst ? Delete(first) : Create(first);
+        try
+        {
+            await pause.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+            var following = deleteFirst ? Create(second) : Delete(second);
+            await DatabaseLocks.WaitUntilBlockedAsync(database, process, ct);
+            pause.Release.TrySetResult();
+            await initial;
+            if (deleteFirst) await Assert.ThrowsAsync<AccessDeniedException>(() => following);
+            else await following;
+            Assert.False(await second.Invitations.AnyAsync(value => value.ProjectId == project, ct));
+            Assert.False(await second.Memberships.AnyAsync(value => value.ProjectId == project, ct));
+        }
+        finally { pause.Release.TrySetResult(); }
+    }
 
     [Theory]
     [InlineData(false)]
