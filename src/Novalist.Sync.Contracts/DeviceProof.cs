@@ -5,7 +5,9 @@ namespace Novalist.Sync.Contracts;
 
 public sealed record DeviceRegistrationContext(Guid UserId, string ServerUrl);
 public sealed record DevicePublicKeys(Guid DeviceId, byte[] SigningPublicKey, byte[] ReceivingPublicKey);
-public sealed record VerifiedDeviceRegistration(DevicePublicKeys Keys, byte[] Signature, Guid? LinkedByDeviceId = null, byte[]? LinkingSignature = null);
+public sealed record DeviceRecoveryRegistration(DevicePublicKeys Keys, byte[] Signature, byte[] LinkingSignature);
+public sealed record VerifiedDeviceRegistration(DevicePublicKeys Keys, byte[] Signature, Guid? LinkedByDeviceId = null,
+    byte[]? LinkingSignature = null, DeviceRecoveryRegistration? RecoveryDevice = null);
 public sealed record DeviceConnectionChallenge(Guid UserId, Guid DeviceId, Guid Nonce, string ServerUrl);
 
 public static class DeviceProof

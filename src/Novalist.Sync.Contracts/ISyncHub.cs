@@ -6,6 +6,8 @@ public interface ISyncHub
     Task RegisterProjectDevice(Guid projectId, uint epoch, byte[] certificate);
     Task<IReadOnlyList<ProjectDevice>> ListProjectDevices(Guid projectId);
     Task BeginProjectEpoch(BeginProjectEpoch request);
+    Task<ProjectEpochStatus> ReserveProjectEpoch(Guid projectId, Guid rotationId);
+    Task CancelProjectEpoch(Guid rotationId);
     Task<long> StageProjectEpoch(Guid rotationId, Envelope envelope);
     Task StageProjectEpochGrant(Guid rotationId, ProjectEpochGrant grant);
     Task CommitProjectEpoch(CommitProjectEpoch request);

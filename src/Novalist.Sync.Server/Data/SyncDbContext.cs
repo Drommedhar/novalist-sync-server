@@ -50,6 +50,7 @@ public sealed class SyncDbContext(DbContextOptions<SyncDbContext> options) : DbC
         modelBuilder.Entity<FieldLeaseAttempt>(attempt =>
         {
             attempt.HasKey(value => new { value.ProjectId, value.DeviceId, value.LeaseId });
+            attempt.HasIndex(value => value.ExpiresAt);
             attempt.HasOne<Project>().WithMany().HasForeignKey(value => value.ProjectId);
             attempt.HasOne<Device>().WithMany().HasForeignKey(value => value.DeviceId).OnDelete(DeleteBehavior.Restrict);
         });

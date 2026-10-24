@@ -24,6 +24,7 @@ public sealed partial class ProjectAccess
 
     public async Task<IReadOnlyList<Guid>> DeleteAsync(Guid ownerId, Guid projectId, CancellationToken ct)
     {
+        await using var delivery = await PauseDeliveryAsync(projectId, ct);
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         await db.Projects.FromSqlInterpolated($"SELECT * FROM projects WHERE id = {projectId} FOR UPDATE").ToListAsync(ct);
         await EnsureIsOwnerAsync(ownerId, projectId, ct);

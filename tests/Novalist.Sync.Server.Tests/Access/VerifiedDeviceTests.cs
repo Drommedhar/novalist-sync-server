@@ -44,8 +44,9 @@ public sealed class VerifiedDeviceTests(DatabaseFixture database) : IAsyncDispos
         using var receiving = Key.Create(KeyAgreementAlgorithm.X25519);
         var first = new DevicePublicKeys(Guid.NewGuid(), firstSigning.PublicKey.Export(KeyBlobFormat.RawPublicKey), receiving.PublicKey.Export(KeyBlobFormat.RawPublicKey));
         var second = new DevicePublicKeys(Guid.NewGuid(), secondSigning.PublicKey.Export(KeyBlobFormat.RawPublicKey), receiving.PublicKey.Export(KeyBlobFormat.RawPublicKey));
+        TestEnrollment.Authorize(http, first.SigningPublicKey);
         using var firstResult = await http.PutAsJsonAsync("/devices/verified",
-            new VerifiedDeviceRegistration(first, SignatureAlgorithm.Ed25519.Sign(firstSigning, DeviceProof.EncodeRegistration(SyncServer.PublicUrl, account.UserId, first))), Ct);
+            TestEnrollment.First(account.UserId, first, firstSigning), Ct);
         Assert.Equal(HttpStatusCode.NoContent, firstResult.StatusCode);
         var unlinked = new VerifiedDeviceRegistration(second, SignatureAlgorithm.Ed25519.Sign(secondSigning, DeviceProof.EncodeRegistration(SyncServer.PublicUrl, account.UserId, second)));
         using var unlinkedResult = await http.PutAsJsonAsync("/devices/verified", unlinked, Ct);
@@ -92,10 +93,12 @@ public sealed class VerifiedDeviceTests(DatabaseFixture database) : IAsyncDispos
         var project = Guid.NewGuid();
         await legacy.InvokeAsync("CreateProject", project, Ct);
         var registration = await http.GetFromJsonAsync<DeviceRegistrationContext>("/devices/registration", Ct);
+        Assert.NotNull(registration);
         using var signing = Key.Create(SignatureAlgorithm.Ed25519);
         using var receiving = Key.Create(KeyAgreementAlgorithm.X25519);
         var keys = new DevicePublicKeys(Guid.NewGuid(), signing.PublicKey.Export(KeyBlobFormat.RawPublicKey), receiving.PublicKey.Export(KeyBlobFormat.RawPublicKey));
-        var request = new VerifiedDeviceRegistration(keys, SignatureAlgorithm.Ed25519.Sign(signing, DeviceProof.EncodeRegistration(SyncServer.PublicUrl, registration!.UserId, keys)));
+        var request = TestEnrollment.First(registration.UserId, keys, signing);
+        TestEnrollment.Authorize(http, keys.SigningPublicKey);
         using var response = await http.PutAsJsonAsync("/devices/verified", request, Ct);
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
         using var legacyAgain = await http.PutAsync($"/devices/{Guid.NewGuid()}", null, Ct);
@@ -116,11 +119,12 @@ public sealed class VerifiedDeviceTests(DatabaseFixture database) : IAsyncDispos
         using var receiving = Key.Create(KeyAgreementAlgorithm.X25519);
         var id = Guid.NewGuid();
         var keys = new DevicePublicKeys(id, signing.PublicKey.Export(KeyBlobFormat.RawPublicKey), receiving.PublicKey.Export(KeyBlobFormat.RawPublicKey));
-        var proof = SignatureAlgorithm.Ed25519.Sign(signing, DeviceProof.EncodeRegistration(SyncServer.PublicUrl, registration.UserId, keys));
-        var request = new VerifiedDeviceRegistration(keys, proof);
+        var request = TestEnrollment.First(registration.UserId, keys, signing);
+        TestEnrollment.Authorize(http, keys.SigningPublicKey);
         using var response = await http.PutAsJsonAsync("/devices/verified", request, Ct);
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
-        using var retry = await http.PutAsJsonAsync("/devices/verified", request, Ct);
+        http.DefaultRequestHeaders.Authorization = new("Bearer", token);
+        using var retry = await http.PutAsJsonAsync("/devices/verified", request with { RecoveryDevice = null }, Ct);
         Assert.Equal(HttpStatusCode.NoContent, retry.StatusCode);
 
         await using var first = server.CreateHubConnection(token, id);

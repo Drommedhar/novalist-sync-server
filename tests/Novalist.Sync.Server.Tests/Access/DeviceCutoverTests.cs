@@ -32,7 +32,8 @@ public sealed class DeviceCutoverTests(DatabaseFixture database)
         using var signing = Key.Create(SignatureAlgorithm.Ed25519);
         using var receiving = Key.Create(KeyAgreementAlgorithm.X25519);
         var keys = new DevicePublicKeys(Guid.NewGuid(), signing.PublicKey.Export(KeyBlobFormat.RawPublicKey), receiving.PublicKey.Export(KeyBlobFormat.RawPublicKey));
-        var proof = new VerifiedDeviceRegistration(keys, SignatureAlgorithm.Ed25519.Sign(signing, DeviceProof.EncodeRegistration(SyncServer.PublicUrl, account.UserId, keys)));
+        var proof = TestEnrollment.First(account.UserId, keys, signing);
+        TestEnrollment.Authorize(http, keys.SigningPublicKey);
         var create = http.PostAsJsonAsync($"/projects/{project}/invitations", new CreateInvitation(Guid.NewGuid(), DateTimeOffset.UtcNow.AddHours(1)), ct);
         try
         {

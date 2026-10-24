@@ -26,6 +26,9 @@ public sealed class RelayTransportTests
             builder.UseSetting("Relay:KnownProxies:0", "192.0.2.10");
             builder.UseSetting("Authentication:Schemes:Bearer:Authority", "https://idp.example");
             builder.UseSetting("Authentication:Schemes:Bearer:ValidAudiences:0", "novalist");
+            builder.UseSetting("Relay:Introspection:Endpoint", "https://idp.example/introspect");
+            builder.UseSetting("Relay:Introspection:ClientId", "relay-test");
+            builder.UseSetting("Relay:Introspection:ClientSecret", "relay-test-secret");
         });
         using var client = factory.CreateClient();
         var response = await factory.Server.SendAsync(context =>

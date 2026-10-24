@@ -140,7 +140,7 @@ public class ProjectAccessTests(DatabaseFixture database)
     private async Task CallAsync(Func<ProjectAccess, Task> call)
     {
         await using var db = database.CreateContext();
-        await call(new ProjectAccess(db));
+        await call(new ProjectAccess(db, database.DeliveryGate));
     }
 
     private async Task<bool> IsAllowedAsync(Func<ProjectAccess, Task> check)

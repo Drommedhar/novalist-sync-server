@@ -79,8 +79,8 @@ public sealed class InvitationActivationTests(DatabaseFixture database)
             ?? throw new InvalidDataException("Missing device registration context.");
         using var receiving = Key.Create(KeyAgreementAlgorithm.X25519);
         var keys = new DevicePublicKeys(deviceId, signing.PublicKey.Export(KeyBlobFormat.RawPublicKey), receiving.PublicKey.Export(KeyBlobFormat.RawPublicKey));
-        using var response = await http.PutAsJsonAsync("/devices/verified", new VerifiedDeviceRegistration(keys,
-            SignatureAlgorithm.Ed25519.Sign(signing, DeviceProof.EncodeRegistration(SyncServer.PublicUrl, context.UserId, keys))), ct);
+        TestEnrollment.Authorize(http, keys.SigningPublicKey);
+        using var response = await http.PutAsJsonAsync("/devices/verified", TestEnrollment.First(context.UserId, keys, signing), ct);
         response.EnsureSuccessStatusCode();
         var hub = server.CreateHubConnection(token, deviceId);
         try { await AuthenticateAsync(hub, signing, ct); return hub; }

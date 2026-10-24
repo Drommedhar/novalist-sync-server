@@ -40,7 +40,7 @@ public sealed class PresenceValidationTests(DatabaseFixture database)
         };
         var transactions = new TransactionCounter();
         await using var db = database.CreateContext(transactions);
-        var presence = new PresenceAccess(db, new(db), new(db));
+        var presence = new PresenceAccess(db, new(db, database.DeliveryGate), new(db, database.DeliveryGate), database.DeliveryGate);
         Task Send() => presence.DeliverAsync(sender.Id, device, envelope,
             (_, _, _) => throw new InvalidOperationException("Invalid presence reached delivery."), ct);
         if (invalid is "membership" or "device") await Assert.ThrowsAsync<AccessDeniedException>(Send);

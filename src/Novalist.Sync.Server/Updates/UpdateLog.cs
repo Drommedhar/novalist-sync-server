@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 using Novalist.Sync.Contracts;
+using Novalist.Sync.Server.Access;
 using Novalist.Sync.Server.Data;
 
 namespace Novalist.Sync.Server.Updates;
@@ -35,6 +36,9 @@ public sealed class UpdateLog(SyncDbContext db)
         if (duplicate is { } previous) return previous;
         if (project.CurrentEpoch != epoch)
             throw new PushRejectedException("The update epoch is no longer current. Refresh the project encryption keys.");
+        if (await db.ProjectEpochStages.AnyAsync(stage => stage.ProjectId == header.ProjectId && stage.PreviousEpoch == epoch &&
+            stage.CreatedAt > DateTimeOffset.UtcNow - ProjectEpochAccess.ReservationLifetime, cancellationToken))
+            throw new PushRejectedException("Project key rotation is in progress. Retry after the rotation finishes.");
 
         var owner = (int)MembershipRole.Owner;
         var contributor = (int)MembershipRole.Contributor;

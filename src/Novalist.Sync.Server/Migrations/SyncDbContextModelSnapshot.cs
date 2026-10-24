@@ -114,11 +114,18 @@ namespace Novalist.Sync.Server.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("lease_id");
 
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
                     b.HasKey("ProjectId", "DeviceId", "LeaseId")
                         .HasName("pk_field_lease_attempts");
 
                     b.HasIndex("DeviceId")
                         .HasDatabaseName("ix_field_lease_attempts_device_id");
+
+                    b.HasIndex("ExpiresAt")
+                        .HasDatabaseName("ix_field_lease_attempts_expires_at");
 
                     b.ToTable("field_lease_attempts", (string)null);
                 });

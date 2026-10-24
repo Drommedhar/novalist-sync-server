@@ -8,15 +8,19 @@ namespace Novalist.Sync.Server.Access;
 
 public sealed class FieldLeaseAccess(SyncDbContext db, DeviceRegistry devices, UpdateLog updates)
 {
+    public const int MaximumRetainedAttempts = 256;
+
     public Task<FieldLeaseGrant> AcquireAsync(Guid userId, Guid deviceId, FieldLeaseRequest request, CancellationToken ct) =>
         WithinAsync(userId, deviceId, request, async (project, now) =>
         {
             var previous = await ReadAsync(request, ct);
             if (Owns(previous, deviceId, request, now))
                 return Grant(previous, project, now);
+            if (AcquisitionDeadline(request, now) <= now)
+                throw new ConflictException("This focus request expired. Start a new focus request.");
             if (await db.FieldLeaseAttempts.AnyAsync(attempt => attempt.ProjectId == request.ProjectId && attempt.DeviceId == deviceId && attempt.LeaseId == request.LeaseId, ct))
                 throw new ConflictException("A finished focus request needs a new lease identifier.");
-            await RetireAsync(deviceId, request, ct);
+            await RetireAsync(deviceId, request, now, ct);
             if (previous is not null && previous.Epoch == request.Epoch && previous.ExpiresAt > now)
                 return Grant(previous, project, now);
             var expires = now.AddSeconds(30);
@@ -45,7 +49,7 @@ public sealed class FieldLeaseAccess(SyncDbContext db, DeviceRegistry devices, U
     public Task<bool> ReleaseAsync(Guid userId, Guid deviceId, FieldLeaseRequest request, CancellationToken ct) =>
         WithinAsync(userId, deviceId, request, async (_, now) =>
         {
-            await RetireAsync(deviceId, request, ct);
+            await RetireAsync(deviceId, request, now, ct);
             if (!Owns(await ReadAsync(request, ct), deviceId, request, now)) return false;
             await db.FieldLeases.Where(value => value.ProjectId == request.ProjectId && value.ResourceId == request.ResourceId)
                 .ExecuteUpdateAsync(set => set.SetProperty(value => value.ExpiresAt, DateTimeOffset.UnixEpoch), ct);
@@ -86,7 +90,7 @@ public sealed class FieldLeaseAccess(SyncDbContext db, DeviceRegistry devices, U
     {
         if (request.ProjectId == Guid.Empty || request.ResourceId == Guid.Empty || request.LeaseId == Guid.Empty)
             throw new ArgumentException("Project, resource and lease identities are required.");
-        await using var transaction = await AccountAccessLock.AcquireAsync(db, userId, legacyAccount: false, ct);
+        await using var transaction = await AccountAccessLock.AcquireAsync(db, userId, legacyAccount: false, ct, shared: true);
         await devices.EnsureActiveAsync(userId, deviceId, ct);
         var projects = await db.Projects.FromSqlInterpolated($"SELECT * FROM projects WHERE id = {request.ProjectId} FOR UPDATE")
             .AsNoTracking().ToListAsync(ct);
@@ -99,6 +103,8 @@ public sealed class FieldLeaseAccess(SyncDbContext db, DeviceRegistry devices, U
         if (project is null || project.CurrentEpoch != request.Epoch)
             throw new AccessDeniedException("This project's editing epoch is no longer current.");
         var now = await db.Database.SqlQuery<DateTimeOffset>($"SELECT clock_timestamp() AS \"Value\"").SingleAsync(ct);
+        await db.FieldLeaseAttempts.Where(attempt => attempt.ProjectId == request.ProjectId &&
+            attempt.DeviceId == deviceId && attempt.ExpiresAt <= now).ExecuteDeleteAsync(ct);
         var result = await action(project, now);
         await transaction.CommitAsync(ct);
         return result;
@@ -107,11 +113,25 @@ public sealed class FieldLeaseAccess(SyncDbContext db, DeviceRegistry devices, U
     private Task<FieldLease?> ReadAsync(FieldLeaseRequest request, CancellationToken ct) => db.FieldLeases.AsNoTracking()
         .SingleOrDefaultAsync(lease => lease.ProjectId == request.ProjectId && lease.ResourceId == request.ResourceId, ct);
 
-    private Task<int> RetireAsync(Guid deviceId, FieldLeaseRequest request, CancellationToken ct) =>
-        db.Database.ExecuteSqlInterpolatedAsync($"""
-            INSERT INTO field_lease_attempts (project_id, device_id, lease_id)
-            VALUES ({request.ProjectId}, {deviceId}, {request.LeaseId}) ON CONFLICT DO NOTHING
+    private async Task RetireAsync(Guid deviceId, FieldLeaseRequest request, DateTimeOffset now, CancellationToken ct)
+    {
+        var expires = AcquisitionDeadline(request, now);
+        if (expires <= now || await db.FieldLeaseAttempts.AnyAsync(attempt => attempt.ProjectId == request.ProjectId &&
+            attempt.DeviceId == deviceId && attempt.LeaseId == request.LeaseId, ct)) return;
+        if (await db.FieldLeaseAttempts.CountAsync(attempt => attempt.ProjectId == request.ProjectId && attempt.DeviceId == deviceId, ct) >= MaximumRetainedAttempts)
+            throw new ConflictException("Too many recent focus requests. Wait for expired requests to clear.");
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO field_lease_attempts (project_id, device_id, lease_id, expires_at)
+            VALUES ({request.ProjectId}, {deviceId}, {request.LeaseId}, {expires}) ON CONFLICT DO NOTHING
             """, ct);
+    }
+
+    private static DateTimeOffset AcquisitionDeadline(FieldLeaseRequest request, DateTimeOffset now)
+    {
+        if (request.AcquireBefore is not { } deadline || deadline > now.AddMinutes(2))
+            throw new FormatException("A focus request needs an acquisition deadline no more than two minutes ahead.");
+        return deadline;
+    }
 
     private static bool Owns([NotNullWhen(true)] FieldLease? lease, Guid deviceId, FieldLeaseRequest request, DateTimeOffset now) =>
         lease is not null && lease.DeviceId == deviceId && lease.LeaseId == request.LeaseId && lease.Epoch == request.Epoch && lease.ExpiresAt > now;

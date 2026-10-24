@@ -33,6 +33,13 @@ public static class RelayTransportSecurity
                 await context.Response.WriteAsync("Use HTTPS for relay connections.", context.RequestAborted);
                 return;
             }
+            if (context.Request.Path.StartsWithSegments("/relay/v1") &&
+                !context.RequestServices.GetRequiredService<RelayQuotas>().Request(RelayIdentity.From(context), false))
+            {
+                context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                context.Response.Headers.RetryAfter = "60";
+                return;
+            }
             await next(context);
         });
     }

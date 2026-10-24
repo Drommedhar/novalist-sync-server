@@ -8,6 +8,8 @@ namespace Novalist.Sync.Server.Access;
 
 public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess projects)
 {
+    public static readonly TimeSpan ReservationLifetime = TimeSpan.FromMinutes(2);
+
     public async Task<ProjectEpochStatus> StatusAsync(Guid user, Guid project, CancellationToken ct)
     {
         await projects.EnsureCanReadAsync(user, project, ct);
@@ -62,7 +64,8 @@ public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess p
         var project = await LockProjectAsync(request.ProjectId, ct);
         await projects.EnsureIsOwnerAsync(user, request.ProjectId, ct);
         CheckBoundary(project, request.PreviousEpoch, request.PreviousServerSeq);
-        await db.ProjectEpochStages.Where(value => value.ProjectId == request.ProjectId && value.CreatedAt < DateTimeOffset.UtcNow.AddDays(-1)).ExecuteDeleteAsync(ct);
+        await db.ProjectEpochStages.Where(value => value.ProjectId == request.ProjectId && value.CreatedAt <= DateTimeOffset.UtcNow - ReservationLifetime).ExecuteDeleteAsync(ct);
+        await EnsureReservationAvailableAsync(request.ProjectId, request.RotationId, ct);
         await db.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO project_epoch_stages (id, project_id, device_id, previous_epoch, previous_server_seq, created_at, count)
             VALUES ({request.RotationId}, {request.ProjectId}, {device}, {(long)request.PreviousEpoch},
@@ -117,7 +120,8 @@ public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess p
     private async Task<ProjectEpochStage> LockStageAsync(Guid rotation, Guid device, CancellationToken ct)
     {
         var stage = (await db.ProjectEpochStages.FromSqlInterpolated($"SELECT * FROM project_epoch_stages WHERE id = {rotation} FOR UPDATE").ToListAsync(ct)).SingleOrDefault();
-        if (stage is null || stage.DeviceId != device) throw new ConflictException("The project transition is unavailable.");
+        if (stage is null || stage.DeviceId != device || stage.CreatedAt <= DateTimeOffset.UtcNow - ReservationLifetime)
+            throw new ConflictException("The project transition is unavailable or expired.");
         return stage;
     }
 

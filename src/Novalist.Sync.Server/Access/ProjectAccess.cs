@@ -4,9 +4,11 @@ using Npgsql;
 
 namespace Novalist.Sync.Server.Access;
 
-public sealed partial class ProjectAccess(SyncDbContext db)
+public sealed partial class ProjectAccess(SyncDbContext db, AccessDeliveryGate deliveryGate)
 {
     private const string ProjectPrimaryKey = "pk_projects";
+
+    internal ValueTask<IAsyncDisposable> PauseDeliveryAsync(Guid project, CancellationToken ct) => deliveryGate.ProjectAsync(project, ct);
 
     public async Task CreateAsync(Guid userId, Guid projectId, CancellationToken cancellationToken)
     {
@@ -74,6 +76,7 @@ public sealed partial class ProjectAccess(SyncDbContext db)
 
         await EnsureIsOwnerAsync(ownerId, projectId, cancellationToken);
         if (!await db.Users.AnyAsync(user => user.Id == memberId, cancellationToken)) return;
+        await using var delivery = await PauseDeliveryAsync(projectId, cancellationToken);
         await using var transaction = await AccountAccessLock.AcquireAsync(db, memberId, legacyAccount: false, cancellationToken);
         await db.Projects.FromSqlInterpolated($"SELECT * FROM projects WHERE id = {projectId} FOR UPDATE").ToListAsync(cancellationToken);
         await EnsureIsOwnerAsync(ownerId, projectId, cancellationToken);

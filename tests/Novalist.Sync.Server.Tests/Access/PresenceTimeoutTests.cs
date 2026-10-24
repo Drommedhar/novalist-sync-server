@@ -3,7 +3,6 @@ using Novalist.Sync.Contracts;
 using Novalist.Sync.Server.Data;
 using Novalist.Sync.Server.Tests.Infrastructure;
 using Novalist.Sync.Server.Updates;
-using Npgsql;
 
 namespace Novalist.Sync.Server.Tests.Access;
 
@@ -12,7 +11,7 @@ public sealed class PresenceTimeoutTests(DatabaseFixture database)
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task CancellationStopsDeliveryBeforeReleasingTheProjectForWrites(bool cancelCaller)
+    public async Task SlowPresenceHoldsNoTransactionAndDoesNotBlockProjectWrites(bool cancelCaller)
     {
         var ct = TestContext.Current.CancellationToken;
         using var caller = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -20,10 +19,8 @@ public sealed class PresenceTimeoutTests(DatabaseFixture database)
         var device = await database.CreateDeviceAsync(user.Id);
         var project = await database.CreateProjectAsync((user.Id, MembershipRole.Owner));
         await using var writing = database.CreateContext();
-        await writing.Database.OpenConnectionAsync(ct);
-        var process = ((NpgsqlConnection)writing.Database.GetDbConnection()).ProcessID;
         await using var sending = database.CreateContext();
-        var presence = new PresenceAccess(sending, new(sending), new(sending));
+        var presence = new PresenceAccess(sending, new(sending, database.DeliveryGate), new(sending, database.DeliveryGate), database.DeliveryGate);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -44,10 +41,12 @@ public sealed class PresenceTimeoutTests(DatabaseFixture database)
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+            Assert.Null(sending.Database.CurrentTransaction);
+            var update = new UpdateLog(writing).AppendAsync(user.Id, TestData.Envelope(project, device, 2), ct);
+            Assert.Equal(1, await update.WaitAsync(TimeSpan.FromSeconds(5), ct));
+            Assert.False(stopped);
             if (cancelCaller) await caller.CancelAsync();
             await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
-            var update = new UpdateLog(writing).AppendAsync(user.Id, TestData.Envelope(project, device, 2), ct);
-            await DatabaseLocks.WaitUntilBlockedAsync(database, process, ct);
             Assert.False(stopped);
             finish.TrySetResult();
             if (cancelCaller) await Assert.ThrowsAnyAsync<OperationCanceledException>(() => delivery);
@@ -57,7 +56,6 @@ public sealed class PresenceTimeoutTests(DatabaseFixture database)
                 Assert.Equal("Presence delivery timed out.", error.Message);
             }
             Assert.True(stopped);
-            Assert.Equal(1, await update.WaitAsync(TimeSpan.FromSeconds(5), ct));
             Assert.Null(sending.Database.CurrentTransaction);
             Assert.Single(await writing.Updates.Where(value => value.ProjectId == project).ToListAsync(ct));
         }

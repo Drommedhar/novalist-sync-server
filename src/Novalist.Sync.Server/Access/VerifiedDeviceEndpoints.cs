@@ -1,6 +1,5 @@
 using System.Security.Claims;
 using Novalist.Sync.Contracts;
-using Novalist.Sync.Server.Hubs;
 
 namespace Novalist.Sync.Server.Access;
 
@@ -15,15 +14,12 @@ public static class VerifiedDeviceEndpoints
     }
 
     private static async Task<IResult> RegisterAsync(VerifiedDeviceRegistration request, ClaimsPrincipal principal,
-        UserDirectory users, DeviceRegistry devices, ConnectionRegistry connections, DeviceProofServer proofs, CancellationToken ct)
+        VerifiedDeviceEnrollment enrollment, DeviceProofServer proofs, CancellationToken ct)
     {
         var serverUrl = proofs.ServerUrl;
         try
         {
-            var user = await users.GetOrCreateAsync(principal, ct);
-            var change = await devices.RegisterVerifiedAsync(user.Id, request, serverUrl, ct);
-            if (change == DeviceRegistrationChange.FirstVerified) connections.AbortUser(user.Id);
-            else if (change == DeviceRegistrationChange.Linked) connections.AbortDevice(request.Keys.DeviceId);
+            await enrollment.RegisterAsync(principal, request, serverUrl, ct);
             return Results.NoContent();
         }
         catch (FormatException error) { return Results.Problem(detail: error.Message, statusCode: StatusCodes.Status400BadRequest); }

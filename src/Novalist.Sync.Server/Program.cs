@@ -13,8 +13,7 @@ var builder = WebApplication.CreateBuilder(args);
 var relayEnabled = builder.Configuration.GetValue("Relay:Enabled", true);
 if (relayEnabled)
 {
-    builder.Services.AddSingleton<RelaySessions>();
-    builder.Services.AddRelayTransportSecurity(builder.Configuration);
+    builder.Services.AddRelay(builder.Configuration);
 }
 else
 {
@@ -28,10 +27,15 @@ else
     builder.Services.AddScoped<UpdateLog>();
     builder.Services.AddScoped<PresenceAccess>();
     builder.Services.AddScoped<FieldLeaseAccess>();
+    builder.Services.AddScoped<EphemeralStateCleanup>();
+    builder.Services.AddHostedService<EphemeralStateCleanupService>();
 
     builder.Services.AddScoped<UserDirectory>();
+    builder.Services.AddSingleton<AccessDeliveryGate>();
     builder.Services.AddScoped<DeviceRegistry>();
     builder.Services.AddSingleton<DeviceProofServer>();
+    builder.Services.AddSingleton<DeviceEnrollmentPolicy>();
+    builder.Services.AddScoped<VerifiedDeviceEnrollment>();
     builder.Services.AddScoped<ProjectAccess>();
     builder.Services.AddScoped<ProjectEpochAccess>();
     builder.Services.AddScoped<InvitationAccess>();

@@ -18,5 +18,5 @@ internal static class RelayAuthentication
 
     internal static bool Owns(RelaySession session, HttpContext context) => session.HostProof is { } expected
         ? HostProof(context) is { } actual && CryptographicOperations.FixedTimeEquals(expected, actual)
-        : session.Subject == context.User.FindFirst("sub")?.Value && session.Issuer == context.User.FindFirst("iss")?.Value;
+        : session.Owner.Subject == context.User.FindFirst("sub")?.Value && session.Owner.Issuer == context.User.FindFirst("iss")?.Value;
 }

@@ -411,18 +411,31 @@ displayed as a word list or grouped base32). From it the client derives a
 **recovery device**:
 
 ```
-recSeed = HKDF(recoveryKey, info = "novalist/v1/recovery")
-recovery device = Ed25519 + X25519 key pairs derived from recSeed
+recSeed       = HKDF-SHA256(recoveryKey, empty salt, "novalist/v1/recovery", 32)
+signingSeed   = HKDF-SHA256(recSeed, empty salt, "novalist/v1/recovery/signing", 32)
+receivingSeed = HKDF-SHA256(recSeed, empty salt, "novalist/v1/recovery/receiving", 32)
+recovery device = Ed25519(signingSeed) + X25519(receivingSeed)
 ```
 
-The recovery device is registered like a normal device, so every project's epoch
-keys are automatically wrapped for it — no separate backup to keep in sync.
+First verified enrollment atomically registers the ordinary device and its
+recovery device, with independent signing and receiving keys. The recovery
+device signs its own registration; the ordinary device signs its linking proof.
+An existing verified device can also authorize a recovery device through ordinary
+device linking. The client keeps all private key material and clears temporary
+derived seeds. The server stores only the ordinary public device records.
 
-To recover: on a new installation the user enters the recovery key, the client
-re-derives the recovery device, unwraps the epoch keys, and uses the recovery
-device's signing key to link the new real device. Lose all devices **and** the
-recovery key → data is gone. Anyone holding the recovery key has full access, so
-the UI must say so clearly.
+On a new installation, the client re-derives the recovery identity from the saved
+key and uses it to sign a replacement device's linking proof. This remains valid
+after the ordinary device has been revoked. Revoked records never reopen
+token-only enrollment, and a revoked recovery device cannot authorize a link.
+
+This recovers account/device enrollment. Access to previous project content still
+requires retained project keys or an authorized collaborator's key grant and
+device certificate; enrollment does not recreate missing encryption keys. Full
+project recovery needs epoch keys wrapped for the recovery device. The explicit
+client enrollment API requires a caller-supplied recovery identity; it does not
+silently generate or save an undisclosed recovery secret. Losing every authorized
+device and the recovery key leaves no cryptographic recovery path.
 
 ## 7. Message format
 
@@ -569,12 +582,15 @@ to 4096 bytes. Presence never increments `serverSeq` or appears in catch-up.
 Clients throttle outgoing updates, reject stale/replayed presence and expire
 inactive cursors locally. The server does not interpret the encrypted state.
 
-Malformed and unauthorized presence is rejected before opening a transaction.
-Membership and epoch are rechecked under a project lock held through the send.
-The send has a one-second cancellation deadline, passed into SignalR's outbound
-write; cancellation finishes before the transaction releases its locks. A stalled
-recipient therefore cannot hold up project writes indefinitely. A timeout reports
-`Presence delivery timed out.`; clients may send their next fresh presence state.
+Malformed and unauthorized presence is rejected before delivery coordination.
+Membership, epoch and active devices are rechecked under process-local project
+and account gates shared with access changes. Delivery holds no database
+transaction or row locks, so a slow recipient does not block ordinary pushes.
+The send has a one-second cancellation deadline passed into SignalR's outbound
+write. Access changes wait for an in-flight send to finish, then later sends
+exclude removed or revoked recipients. A timeout reports `Presence delivery
+timed out.`; clients may send their next fresh presence state. These gates share
+the existing single-instance restriction of connection revocation (§13).
 
 ### 8.9 Pausing and resuming
 
@@ -636,12 +652,12 @@ MIME types and keys are only visible inside the encrypted manifest.
 | Table          | Contents                                                       | Server can read? |
 | -------------- | -------------------------------------------------------------- | ---------------- |
 | `users`        | OIDC issuer + subject, email, username (§10.1)                 | yes              |
-| `devices`      | deviceId, userId, public keys, linking signature, `isRecovery` | public keys only |
+| `devices`      | deviceId, userId, public keys, linking deviceId and signature | public keys only |
 | `projects`     | projectId, current epoch, epoch start time                     | yes              |
 | `memberships`  | projectId, userId, role (owner, contributor, viewer)           | yes              |
 | `invitations` | invitationId, projectId, expiry, claimant account/device, opaque certificate fingerprint | metadata; no keys |
 | `field_leases` | projectId, opaque resourceId, holder deviceId, leaseId, epoch, expiry | metadata; no field names or values |
-| `field_lease_attempts` | projectId, deviceId, attempted leaseId | yes |
+| `field_lease_attempts` | projectId, deviceId, attempted leaseId, acquisition deadline | temporary metadata |
 | `project_device_authorizations` | projectId, deviceId, epoch, public certificate | public certificate only |
 | `project_epoch_stages` | rotationId, projectId, initiating deviceId, prior epoch/sequence, count, creation time | yes |
 | `project_epoch_envelopes` | rotationId, index, senderSeq, opaque checkpoint envelope | envelope header only |
@@ -671,11 +687,20 @@ The server exposes registered certificate bytes and account/device IDs to the
 owner, who validates the device's receiving key against the existing project
 authority before wrapping a new random epoch key.
 
-Epoch transitions stage opaque checkpoint envelopes and individual opaque grants.
+Epoch transitions reserve a stable update boundary before clients catch up and
+construct the new checkpoint. `ReserveProjectEpoch` returns that boundary and
+fences new old-epoch writes for up to two minutes; confirmed update retries still
+return their original sequence. One reservation may be active per project.
+`CancelProjectEpoch` releases an abandoned reservation, and periodic cleanup
+deletes expired staging data. Clients cancel on failure and retry from a fresh
+reservation if the deadline expires. Transitions then stage opaque checkpoint
+envelopes and individual opaque grants.
 The database atomically compares the previous epoch and last committed sequence,
 assigns checkpoint sequences through the normal log allocator, removes the chosen
 membership, retires all invitations, clears leases and publishes grants only to
-remaining registered devices. Concurrent writing aborts the transaction. Devices
+remaining registered devices. Members without a registered, authorized device
+do not block removal and receive no key grant until an owner authorizes their
+device. The commit still checks the reserved epoch and sequence atomically. Devices
 receive `ProjectEpochChanged` and restart against the owner-signed checkpoint
 boundary. Public metadata adds rotation IDs, device certificates, previous epochs,
 checkpoint boundary sequences, envelope/grant sizes and staging timestamps.
@@ -690,11 +715,16 @@ when the same field is focused and by which device. `AcquireFieldLease`,
 authentication. A grant lasts 30 seconds; renewal requires the same live lease.
 Expired/released focus needs a fresh lease UUID. Acquisition also returns the
 server clock and the project's latest sequence, which the client must catch up
-through before enabling editing. `field_lease_attempts` retains the project/device/
-lease UUIDs for each attempted focus, including denied attempts and releases
-received before acquisition, so delayed requests cannot resurrect an earlier
-focus after intervening leases. A retry of a still-live lease returns its current
-grant. `PushFieldEdit` atomically validates the lease
+through before enabling editing. A new request includes a fixed `AcquireBefore`
+deadline no more than two minutes ahead, preserved on retries. Expired requests
+cannot acquire a lease. `field_lease_attempts` retains project/device/lease UUIDs
+only until that deadline, including denied attempts and releases received before
+acquisition, so delayed requests cannot resurrect an earlier focus after cleanup.
+There are at most 256 retained attempts per device and project; excess requests
+fail explicitly. Cleanup runs every minute and on field operations. A retry of a
+still-live lease returns its current grant. Field operations take a shared account
+lock to protect device cutover, allowing edits in independent projects to proceed
+concurrently. `PushFieldEdit` atomically validates the lease
 and persists an opaque encrypted update. Clients flush before releasing focus;
 late edits after expiry are rejected. Identical already-persisted retries return
 their original sequence. A lost connection leaves a bounded lease, and a new
@@ -714,7 +744,11 @@ Device authentication adds immutable 32-byte Ed25519 and X25519 public keys to
 device records, plus the linking device ID and its public signature when linked.
 `GET /devices/registration` returns the authenticated account's internal user
 UUID and configured canonical server URL. `PUT /devices/verified` receives those public keys, the new device's
-registration signature, and an optional linking device ID/signature. A fresh hub
+registration signature, and an optional linking device ID/signature. First
+enrollment also supplies `RecoveryDevice`: another device's public keys,
+self-registration signature and the ordinary device's linking signature. This
+exposes the recovery-device association during enrollment, without exposing its
+secret. A fresh hub
 challenge contains that user UUID, device UUID, canonical server URL and a random per-connection UUID;
 it is consumed when a proof is attempted and is never logged. The server uses
 NSec only to verify Ed25519 signatures, as permitted by rule 7. No private or
@@ -760,8 +794,17 @@ claims, and only used to find people when inviting them (§8.5).
 OIDC authenticates the **user**, not the device. Verified devices additionally
 answer a fresh `GetDeviceChallenge` using `AuthenticateDevice` before project,
 update, presence or invitation operations. Public keys cannot be replaced under
-an existing device ID. The first verified registration serializes on the account;
-later devices require a signature from an active verified device of that account.
+an existing device ID. The first verified registration serializes on the account
+and requires an access token with `amr` containing `mfa`, a single `auth_time`
+within the last five minutes, and `cnf.jkt` bound to the new device's Ed25519
+signing key. The provider must issue these signed claims after fresh MFA and
+proof of that key; a generic bearer token with an MFA claim is insufficient.
+The thumbprint follows the canonical OKP JWK representation in
+[RFC 8037 Appendix A.3](https://www.rfc-editor.org/rfc/rfc8037.html#appendix-A.3).
+Registration already proves possession of that key through its signature.
+Existing registrations can be retried without repeating enrollment or creating
+another recovery device. Later devices require a signature from an active
+verified device of that account, including its pre-provisioned recovery device.
 Revoked device records still prevent bootstrapping a replacement without linking.
 Registration/linking, revocation, and legacy eligibility checks plus their
 mutations serialize on the same account lock. An already-authorized legacy

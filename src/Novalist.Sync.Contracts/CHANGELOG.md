@@ -10,6 +10,20 @@ the minor version.
 
 ### Added
 
+- `DeviceRecoveryRegistration` and `VerifiedDeviceRegistration.RecoveryDevice`
+  provision a public recovery identity atomically with the first verified device.
+  First enrollment requires a recent MFA token bound to the ordinary signing
+  key through `cnf.jkt`; existing device retries and signed links retain their
+  authentication flow. Only public keys and proofs cross the API.
+
+- `ReserveProjectEpoch` freezes the update boundary before checkpoint creation;
+  `CancelProjectEpoch` releases an abandoned reservation. Reservations expire
+  after two minutes. Confirmed update retries retain their original sequence.
+- `FieldLeaseRequest.AcquireBefore` bounds acquisition retries. New acquisitions
+  must supply a fixed deadline no more than two minutes ahead and reuse it on
+  retries; renewals and edits retain the existing lease identity. Older clients
+  without a deadline receive an explicit rejection. Package minor 1.8.0.
+
 - `NativeClientConfiguration.AuthenticationRequired` advertises optional relay
   authentication; omitted values require sign-in for compatibility. Anonymous
   relay configurations omit the identity-provider settings: `Authority`, `ClientId`

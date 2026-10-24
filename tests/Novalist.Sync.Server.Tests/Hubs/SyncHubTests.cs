@@ -531,7 +531,7 @@ public sealed class SyncHubTests(DatabaseFixture database) : IAsyncDisposable
     {
         var writer = await ConnectAsync();
         var project = await database.CreateProjectAsync((writer.UserId, MembershipRole.Contributor));
-        var request = new FieldLeaseRequest(project, Guid.NewGuid(), 0, Guid.NewGuid());
+        var request = new FieldLeaseRequest(project, Guid.NewGuid(), 0, Guid.NewGuid(), DateTimeOffset.UtcNow.AddMinutes(1));
         await writer.Connection.InvokeAsync<FieldLeaseGrant>("AcquireFieldLease", request, Ct);
         var envelope = TestData.Envelope(project, writer.DeviceId, 1);
         await writer.Connection.InvokeAsync<long>("PushFieldEdit", request, envelope, Ct);

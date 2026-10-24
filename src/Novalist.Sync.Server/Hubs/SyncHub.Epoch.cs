@@ -28,6 +28,18 @@ public sealed partial class SyncHub
         await epochs.BeginAsync(UserId, DeviceId, request, Context.ConnectionAborted);
     }
 
+    public async Task<ProjectEpochStatus> ReserveProjectEpoch(Guid projectId, Guid rotationId)
+    {
+        await RequireVerifiedAccessAsync();
+        return await epochs.ReserveAsync(UserId, DeviceId, projectId, rotationId, Context.ConnectionAborted);
+    }
+
+    public async Task CancelProjectEpoch(Guid rotationId)
+    {
+        await RequireVerifiedAccessAsync();
+        await epochs.CancelAsync(UserId, DeviceId, rotationId, Context.ConnectionAborted);
+    }
+
     public async Task<long> StageProjectEpoch(Guid rotationId, Envelope envelope)
     {
         await RequireVerifiedAccessAsync();

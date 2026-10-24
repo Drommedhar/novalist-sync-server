@@ -10,11 +10,13 @@ public enum DeviceRegistrationChange { Unchanged, FirstVerified, Linked }
 
 public sealed partial class DeviceRegistry
 {
-    public async Task<DeviceRegistrationChange> RegisterVerifiedAsync(Guid userId, VerifiedDeviceRegistration request, string serverUrl, CancellationToken ct)
+    public async Task<DeviceRegistrationChange> RegisterVerifiedAsync(Guid userId, VerifiedDeviceRegistration request, string serverUrl,
+        Action<DevicePublicKeys> authorizeInitialEnrollment, CancellationToken ct)
     {
         if (request.Keys is null) throw new FormatException("Device keys are required.");
         var encoded = DeviceProof.EncodeRegistration(serverUrl, userId, request.Keys);
         Verify(request.Keys.SigningPublicKey, encoded, request.Signature);
+        await using var delivery = await deliveryGate.AccountAsync(userId, ct);
         await using var transaction = await AccountAccessLock.AcquireAsync(db, userId, legacyAccount: false, ct);
         var existing = await db.Devices.FindAsync([request.Keys.DeviceId], ct);
         if (existing is not null)
@@ -33,6 +35,13 @@ public sealed partial class DeviceRegistry
         if (!first) await VerifyLinkAsync(serverUrl, userId, request, ct);
         else if (request.LinkedByDeviceId is not null || request.LinkingSignature is not null)
             throw new AccessDeniedException("The linking device is not registered.");
+        if (first)
+        {
+            authorizeInitialEnrollment(request.Keys);
+            await RegisterRecoveryAsync(userId, request, serverUrl, ct);
+        }
+        else if (request.RecoveryDevice is not null)
+            throw new ConflictException("A recovery device is enrolled only alongside the first verified device.");
         var device = existing ?? new Device { Id = request.Keys.DeviceId, UserId = userId, CreatedAt = DateTimeOffset.UtcNow };
         device.SigningPublicKey = request.Keys.SigningPublicKey.ToArray();
         device.ReceivingPublicKey = request.Keys.ReceivingPublicKey.ToArray();

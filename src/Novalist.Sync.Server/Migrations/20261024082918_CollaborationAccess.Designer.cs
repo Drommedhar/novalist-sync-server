@@ -12,8 +12,8 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Novalist.Sync.Server.Migrations
 {
     [DbContext(typeof(SyncDbContext))]
-    [Migration("20261022170150_StagedProjectEpochGrants")]
-    partial class StagedProjectEpochGrants
+    [Migration("20261024082918_CollaborationAccess")]
+    partial class CollaborationAccess
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -117,11 +117,18 @@ namespace Novalist.Sync.Server.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("lease_id");
 
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
                     b.HasKey("ProjectId", "DeviceId", "LeaseId")
                         .HasName("pk_field_lease_attempts");
 
                     b.HasIndex("DeviceId")
                         .HasDatabaseName("ix_field_lease_attempts_device_id");
+
+                    b.HasIndex("ExpiresAt")
+                        .HasDatabaseName("ix_field_lease_attempts_expires_at");
 
                     b.ToTable("field_lease_attempts", (string)null);
                 });
@@ -154,6 +161,9 @@ namespace Novalist.Sync.Server.Migrations
 
                     b.HasKey("Id")
                         .HasName("pk_invitations");
+
+                    b.HasIndex("ActivatedDeviceId")
+                        .HasDatabaseName("ix_invitations_activated_device_id");
 
                     b.HasIndex("ProjectId")
                         .HasDatabaseName("ix_invitations_project_id");
@@ -517,6 +527,12 @@ namespace Novalist.Sync.Server.Migrations
 
             modelBuilder.Entity("Novalist.Sync.Server.Data.Invitation", b =>
                 {
+                    b.HasOne("Novalist.Sync.Server.Data.Device", null)
+                        .WithMany()
+                        .HasForeignKey("ActivatedDeviceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_invitations_devices_activated_device_id");
+
                     b.HasOne("Novalist.Sync.Server.Data.Project", null)
                         .WithMany()
                         .HasForeignKey("ProjectId")

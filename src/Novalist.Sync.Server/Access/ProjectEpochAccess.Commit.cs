@@ -11,9 +11,10 @@ public sealed partial class ProjectEpochAccess
     public async Task<Guid> CommitAsync(Guid user, Guid device, CommitProjectEpoch request, CancellationToken ct)
     {
         if (request.RemovedMemberId == user) throw new ConflictException("The owner cannot remove themselves.");
-        await using var transaction = await AccountAccessLock.AcquireAsync(db, request.RemovedMemberId, false, ct);
         var projectId = await db.ProjectEpochStages.AsNoTracking().Where(value => value.Id == request.RotationId).Select(value => (Guid?)value.ProjectId).SingleOrDefaultAsync(ct)
             ?? throw new ConflictException("The project transition is unavailable.");
+        await using var delivery = await projects.PauseDeliveryAsync(projectId, ct);
+        await using var transaction = await AccountAccessLock.AcquireAsync(db, request.RemovedMemberId, false, ct);
         var project = await LockProjectAsync(projectId, ct);
         var stage = await LockStageAsync(request.RotationId, device, ct);
         await projects.EnsureIsOwnerAsync(user, project.Id, ct);
@@ -25,10 +26,6 @@ public sealed partial class ProjectEpochAccess
             await db.ProjectEpochDeviceGrants.AsNoTracking().Where(value => value.RotationId == stage.Id)
                 .Select(value => new ProjectEpochGrant(value.DeviceId, value.Certificate, value.Payload)).ToListAsync(ct);
         var members = (await DeviceQuery(project.Id).ToListAsync(ct)).Where(value => value.UserId != request.RemovedMemberId).ToArray();
-        var accounts = await db.Memberships.Where(value => value.ProjectId == project.Id && value.UserId != request.RemovedMemberId)
-            .Select(value => value.UserId).ToListAsync(ct);
-        if (accounts.Except(members.Select(value => value.UserId)).Any())
-            throw new ConflictException("A collaborator is still registering their device. Try changing access again shortly.");
         if (!members.Any(value => value.DeviceId == device) ||
             !members.Select(value => value.DeviceId).Order().SequenceEqual(grants.Select(value => value.DeviceId).Order()))
             throw new ConflictException("Key grants must include exactly the remaining registered devices.");

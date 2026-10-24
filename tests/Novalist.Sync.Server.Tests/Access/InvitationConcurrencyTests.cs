@@ -24,8 +24,8 @@ public sealed class InvitationConcurrencyTests(DatabaseFixture database)
         await using var second = database.CreateContext();
         await second.Database.OpenConnectionAsync(ct);
         var process = ((NpgsqlConnection)second.Database.GetDbConnection()).ProcessID;
-        Task Create(SyncDbContext db) => new InvitationAccess(db, new(db), TimeProvider.System).CreateAsync(owner.Id, project, invitation, ct);
-        Task Delete(SyncDbContext db) => new ProjectAccess(db).DeleteAsync(owner.Id, project, ct);
+        Task Create(SyncDbContext db) => new InvitationAccess(db, new(db, database.DeliveryGate), TimeProvider.System).CreateAsync(owner.Id, project, invitation, ct);
+        Task Delete(SyncDbContext db) => new ProjectAccess(db, database.DeliveryGate).DeleteAsync(owner.Id, project, ct);
         var initial = deleteFirst ? Delete(first) : Create(first);
         try
         {
@@ -58,7 +58,7 @@ public sealed class InvitationConcurrencyTests(DatabaseFixture database)
         {
             await setup.Devices.Where(value => value.Id == device).ExecuteUpdateAsync(
                 set => set.SetProperty(value => value.SigningPublicKey, RandomNumberGenerator.GetBytes(32)), ct);
-            await new InvitationAccess(setup, new(setup), TimeProvider.System).CreateAsync(owner.Id, project,
+            await new InvitationAccess(setup, new(setup, database.DeliveryGate), TimeProvider.System).CreateAsync(owner.Id, project,
                 new(invitation, DateTimeOffset.UtcNow.AddHours(1)), ct);
         }
         var pause = new SqlCommandPause("INSERT INTO memberships");
@@ -66,9 +66,9 @@ public sealed class InvitationConcurrencyTests(DatabaseFixture database)
         await using var second = database.CreateContext();
         await second.Database.OpenConnectionAsync(ct);
         var process = ((NpgsqlConnection)second.Database.GetDbConnection()).ProcessID;
-        Task Activate(SyncDbContext db) => new InvitationAccess(db, new(db), TimeProvider.System)
+        Task Activate(SyncDbContext db) => new InvitationAccess(db, new(db, database.DeliveryGate), TimeProvider.System)
             .ActivateAsync(activated.Id, device, new(invitation, RandomNumberGenerator.GetBytes(32)), ct);
-        Task Redeem(SyncDbContext db) => new InvitationAccess(db, new(db), TimeProvider.System).RedeemAsync(redeemed.Id, invitation, ct);
+        Task Redeem(SyncDbContext db) => new InvitationAccess(db, new(db, database.DeliveryGate), TimeProvider.System).RedeemAsync(redeemed.Id, invitation, ct);
         var initial = activateFirst ? Activate(first) : Redeem(first);
         try
         {

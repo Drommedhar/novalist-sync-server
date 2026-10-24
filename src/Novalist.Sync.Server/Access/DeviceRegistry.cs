@@ -4,7 +4,7 @@ using Npgsql;
 
 namespace Novalist.Sync.Server.Access;
 
-public sealed partial class DeviceRegistry(SyncDbContext db)
+public sealed partial class DeviceRegistry(SyncDbContext db, AccessDeliveryGate deliveryGate)
 {
     private const string DevicePrimaryKey = "pk_devices";
 
@@ -50,6 +50,7 @@ public sealed partial class DeviceRegistry(SyncDbContext db)
 
     public async Task RevokeAsync(Guid userId, Guid deviceId, CancellationToken cancellationToken)
     {
+        await using var delivery = await deliveryGate.AccountAsync(userId, cancellationToken);
         await using var transaction = await AccountAccessLock.AcquireAsync(db, userId, legacyAccount: false, cancellationToken);
         var revoked = await db.Devices
             .Where(d => d.Id == deviceId && d.UserId == userId && d.RevokedAt == null)

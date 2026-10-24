@@ -1,16 +1,18 @@
 using System.Collections.Concurrent;
-using System.Net.WebSockets;
-using System.Threading.Channels;
+using Microsoft.Extensions.Options;
 
 namespace Novalist.Sync.Server.Relay;
 
 public sealed class RelaySessions
 {
     private readonly ConcurrentDictionary<Guid, RelaySession> sessions = new();
+    private readonly RelayOptions options;
 
-    internal RelaySession Create(string issuer, string subject, byte[]? hostProof = null)
+    public RelaySessions(IOptions<RelayOptions> configuration) => options = configuration.Value;
+
+    internal RelaySession Create(RelayIdentity owner, byte[]? hostProof)
     {
-        var session = new RelaySession(issuer, subject, hostProof);
+        var session = new RelaySession(owner, hostProof, options);
         if (!sessions.TryAdd(session.Id, session)) throw new InvalidOperationException("Relay session collision.");
         return session;
     }
@@ -19,28 +21,6 @@ public sealed class RelaySessions
     internal void Remove(RelaySession session)
     {
         sessions.TryRemove(session.Id, out _);
-        session.Stop.Cancel();
-        session.Requests.Writer.TryComplete();
+        session.Close();
     }
-}
-
-internal sealed class RelaySession(string issuer, string subject, byte[]? hostProof)
-{
-    public byte[]? HostProof { get; } = hostProof;
-    public Guid Id { get; } = Guid.NewGuid();
-    public string Issuer { get; } = issuer;
-    public string Subject { get; } = subject;
-    public CancellationTokenSource Stop { get; } = new();
-    public ConcurrentDictionary<Guid, RelayRoute> Routes { get; } = new();
-    public Channel<Guid> Requests { get; } = Channel.CreateBounded<Guid>(new BoundedChannelOptions(128)
-    {
-        SingleReader = true,
-        FullMode = BoundedChannelFullMode.Wait
-    });
-}
-
-internal sealed class RelayRoute
-{
-    public TaskCompletionSource<WebSocket> Host { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public TaskCompletionSource Done { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 }
