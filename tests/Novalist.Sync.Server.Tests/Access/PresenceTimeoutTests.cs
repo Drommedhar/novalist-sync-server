@@ -25,7 +25,7 @@ public sealed class PresenceTimeoutTests(DatabaseFixture database)
         var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var stopped = false;
-        var delivery = presence.DeliverAsync(user.Id, device, TestData.Envelope(project, device, 1, MsgType.Presence),
+        var delivery = presence.DeliverAsync(user.Id, device, TestData.Envelope(project, device, 1, MsgType.Presence), new HashSet<Guid> { device },
             async (_, _, token) =>
             {
                 entered.TrySetResult();

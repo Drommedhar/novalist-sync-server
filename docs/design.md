@@ -422,7 +422,8 @@ recovery device, with independent signing and receiving keys. The recovery
 device signs its own registration; the ordinary device signs its linking proof.
 An existing verified device can also authorize a recovery device through ordinary
 device linking. The client keeps all private key material and clears temporary
-derived seeds. The server stores only the ordinary public device records.
+derived seeds. The server stores both ordinary and recovery public device records,
+never their private keys or the recovery key.
 
 On a new installation, the client re-derives the recovery identity from the saved
 key and uses it to sign a replacement device's linking proof. This remains valid
@@ -436,6 +437,9 @@ project recovery needs epoch keys wrapped for the recovery device. The explicit
 client enrollment API requires a caller-supplied recovery identity; it does not
 silently generate or save an undisclosed recovery secret. Losing every authorized
 device and the recovery key leaves no cryptographic recovery path.
+The UI must warn that anyone holding the recovery key can authorize replacement
+devices and has full access to project content whose epoch keys are wrapped for
+the recovery device.
 
 ## 7. Message format
 
@@ -586,6 +590,11 @@ Malformed and unauthorized presence is rejected before delivery coordination.
 Membership, epoch and active devices are rechecked under process-local project
 and account gates shared with access changes. Delivery holds no database
 transaction or row locks, so a slow recipient does not block ordinary pushes.
+Each message snapshots at most 256 joined recipient connections, and takes
+account gates only for those recipients and the sender. Presence is rejected
+explicitly above that fan-out limit; project editing remains available. Delivery
+targets only captured connections that still belong to the project, after
+checking membership and active devices again under the gates.
 The send has a one-second cancellation deadline passed into SignalR's outbound
 write. Access changes wait for an in-flight send to finish, then later sends
 exclude removed or revoked recipients. A timeout reports `Presence delivery
@@ -716,10 +725,18 @@ authentication. A grant lasts 30 seconds; renewal requires the same live lease.
 Expired/released focus needs a fresh lease UUID. Acquisition also returns the
 server clock and the project's latest sequence, which the client must catch up
 through before enabling editing. A new request includes a fixed `AcquireBefore`
-deadline no more than two minutes ahead, preserved on retries. Expired requests
+deadline no more than two minutes ahead, preserved on retries. Verified clients
+obtain the database clock through `GetFieldLeaseTime` before creating that
+deadline, so an inaccurate device clock cannot prevent acquisition. This exposes
+server time, not additional user or project data. Expired requests
 cannot acquire a lease. `field_lease_attempts` retains project/device/lease UUIDs
 only until that deadline, including denied attempts and releases received before
 acquisition, so delayed requests cannot resurrect an earlier focus after cleanup.
+This fences retries of the original request. Changing the acquisition deadline
+creates a new attempt; the server does not keep permanent lease-UUID history.
+Renewal, editing, and release of an existing lease do not require an acquisition
+deadline. Cancellation received before acquisition must supply the original
+deadline so the server can retain its replay barrier until that time.
 There are at most 256 retained attempts per device and project; excess requests
 fail explicitly. Cleanup runs every minute and on field operations. A retry of a
 still-live lease returns its current grant. Field operations take a shared account

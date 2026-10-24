@@ -35,6 +35,7 @@ public sealed class DeviceEnrollmentTests(DatabaseFixture database)
         var account = await http.GetFromJsonAsync<DeviceRegistrationContext>(Protocol.DeviceRegistrationPath, ct);
         Assert.NotNull(account);
         using var signing = Key.Create(SignatureAlgorithm.Ed25519);
+        using var recoveryDevice = new TestRecoveryDevice();
         using var receiving = Key.Create(KeyAgreementAlgorithm.X25519);
         var keys = new DevicePublicKeys(Guid.NewGuid(), signing.PublicKey.Export(KeyBlobFormat.RawPublicKey), receiving.PublicKey.Export(KeyBlobFormat.RawPublicKey));
         var claims = TestTokens.EnrollmentClaims(keys.SigningPublicKey);
@@ -49,7 +50,7 @@ public sealed class DeviceEnrollmentTests(DatabaseFixture database)
             case "malformed-binding": claims["cnf"] = "not-json"; break;
         }
         http.DefaultRequestHeaders.Authorization = new("Bearer", TestTokens.Create(subject, additionalClaims: claims));
-        using var response = await http.PutAsJsonAsync(Protocol.VerifiedDevicesPath, TestEnrollment.First(account.UserId, keys, signing), ct);
+        using var response = await http.PutAsJsonAsync(Protocol.VerifiedDevicesPath, TestEnrollment.First(account.UserId, keys, signing, recoveryDevice), ct);
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         await using var db = database.CreateContext();
         Assert.False(await db.Devices.AnyAsync(device => device.UserId == account.UserId, ct));
@@ -72,9 +73,10 @@ public sealed class DeviceEnrollmentTests(DatabaseFixture database)
         var account = await http.GetFromJsonAsync<DeviceRegistrationContext>(Protocol.DeviceRegistrationPath, ct);
         Assert.NotNull(account);
         using var signing = Key.Create(SignatureAlgorithm.Ed25519);
+        using var recoveryDevice = new TestRecoveryDevice();
         using var receiving = Key.Create(KeyAgreementAlgorithm.X25519);
         var keys = new DevicePublicKeys(Guid.NewGuid(), signing.PublicKey.Export(KeyBlobFormat.RawPublicKey), receiving.PublicKey.Export(KeyBlobFormat.RawPublicKey));
-        var request = TestEnrollment.First(account.UserId, keys, signing);
+        var request = TestEnrollment.First(account.UserId, keys, signing, recoveryDevice);
         var recovery = request.RecoveryDevice ?? throw new InvalidOperationException("Missing test recovery device.");
         if (invalid == "collision")
         {

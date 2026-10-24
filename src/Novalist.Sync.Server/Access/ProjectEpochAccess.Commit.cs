@@ -13,6 +13,7 @@ public sealed partial class ProjectEpochAccess
         if (request.RemovedMemberId == user) throw new ConflictException("The owner cannot remove themselves.");
         var projectId = await db.ProjectEpochStages.AsNoTracking().Where(value => value.Id == request.RotationId).Select(value => (Guid?)value.ProjectId).SingleOrDefaultAsync(ct)
             ?? throw new ConflictException("The project transition is unavailable.");
+        await projects.EnsureIsOwnerAsync(user, projectId, ct);
         await using var delivery = await projects.PauseDeliveryAsync(projectId, ct);
         await using var transaction = await AccountAccessLock.AcquireAsync(db, request.RemovedMemberId, false, ct);
         var project = await LockProjectAsync(projectId, ct);

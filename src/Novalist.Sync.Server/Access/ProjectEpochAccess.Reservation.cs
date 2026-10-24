@@ -12,7 +12,7 @@ public sealed partial class ProjectEpochAccess
         var project = await LockProjectAsync(projectId, ct);
         await projects.EnsureIsOwnerAsync(user, projectId, ct);
         if (project.CurrentEpoch == uint.MaxValue) throw new ConflictException("The project cannot advance its encryption epoch.");
-        var now = DateTimeOffset.UtcNow;
+        var now = await DatabaseTimeAsync(ct);
         await db.ProjectEpochStages.Where(stage => stage.ProjectId == projectId && stage.CreatedAt <= now - ReservationLifetime).ExecuteDeleteAsync(ct);
         await EnsureReservationAvailableAsync(projectId, rotation, ct);
         await db.Database.ExecuteSqlInterpolatedAsync($"""
@@ -32,10 +32,14 @@ public sealed partial class ProjectEpochAccess
         var project = await db.ProjectEpochStages.AsNoTracking().Where(stage => stage.Id == rotation)
             .Select(stage => (Guid?)stage.ProjectId).SingleOrDefaultAsync(ct);
         if (project is null) return;
-        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await projects.EnsureIsOwnerAsync(user, project.Value, ct);
+        await using var transaction = await AccountAccessLock.AcquireAsync(db, user, legacyAccount: false, ct, shared: true);
         await LockProjectAsync(project.Value, ct);
         await projects.EnsureIsOwnerAsync(user, project.Value, ct);
-        await db.ProjectEpochStages.Where(stage => stage.Id == rotation && stage.DeviceId == device).ExecuteDeleteAsync(ct);
+        if (!await db.Devices.AnyAsync(value => value.Id == device && value.UserId == user && value.RevokedAt == null &&
+            (value.SigningPublicKey != null || !db.Devices.Any(other => other.UserId == user && other.SigningPublicKey != null)), ct))
+            throw new AccessDeniedException("The cancelling device is unavailable.");
+        await db.ProjectEpochStages.Where(stage => stage.Id == rotation).ExecuteDeleteAsync(ct);
         await transaction.CommitAsync(ct);
     }
 

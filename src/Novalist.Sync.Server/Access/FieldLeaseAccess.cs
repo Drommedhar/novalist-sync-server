@@ -10,6 +10,9 @@ public sealed class FieldLeaseAccess(SyncDbContext db, DeviceRegistry devices, U
 {
     public const int MaximumRetainedAttempts = 256;
 
+    public Task<DateTimeOffset> TimeAsync(CancellationToken ct) =>
+        db.Database.SqlQuery<DateTimeOffset>($"SELECT clock_timestamp() AS \"Value\"").SingleAsync(ct);
+
     public Task<FieldLeaseGrant> AcquireAsync(Guid userId, Guid deviceId, FieldLeaseRequest request, CancellationToken ct) =>
         WithinAsync(userId, deviceId, request, async (project, now) =>
         {
@@ -49,8 +52,11 @@ public sealed class FieldLeaseAccess(SyncDbContext db, DeviceRegistry devices, U
     public Task<bool> ReleaseAsync(Guid userId, Guid deviceId, FieldLeaseRequest request, CancellationToken ct) =>
         WithinAsync(userId, deviceId, request, async (_, now) =>
         {
-            await RetireAsync(deviceId, request, now, ct);
-            if (!Owns(await ReadAsync(request, ct), deviceId, request, now)) return false;
+            if (!Owns(await ReadAsync(request, ct), deviceId, request, now))
+            {
+                if (request.AcquireBefore is not null) await RetireAsync(deviceId, request, now, ct);
+                return false;
+            }
             await db.FieldLeases.Where(value => value.ProjectId == request.ProjectId && value.ResourceId == request.ResourceId)
                 .ExecuteUpdateAsync(set => set.SetProperty(value => value.ExpiresAt, DateTimeOffset.UnixEpoch), ct);
             return true;
@@ -102,7 +108,7 @@ public sealed class FieldLeaseAccess(SyncDbContext db, DeviceRegistry devices, U
         var project = projects.SingleOrDefault();
         if (project is null || project.CurrentEpoch != request.Epoch)
             throw new AccessDeniedException("This project's editing epoch is no longer current.");
-        var now = await db.Database.SqlQuery<DateTimeOffset>($"SELECT clock_timestamp() AS \"Value\"").SingleAsync(ct);
+        var now = await TimeAsync(ct);
         await db.FieldLeaseAttempts.Where(attempt => attempt.ProjectId == request.ProjectId &&
             attempt.DeviceId == deviceId && attempt.ExpiresAt <= now).ExecuteDeleteAsync(ct);
         var result = await action(project, now);

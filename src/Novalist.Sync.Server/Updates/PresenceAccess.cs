@@ -7,16 +7,21 @@ namespace Novalist.Sync.Server.Updates;
 
 public sealed class PresenceAccess(SyncDbContext db, DeviceRegistry devices, ProjectAccess projects, AccessDeliveryGate deliveryGate)
 {
-    public async Task DeliverAsync(Guid userId, Guid deviceId, Envelope envelope,
+    public const int MaximumRecipients = 256;
+
+    public async Task DeliverAsync(Guid userId, Guid deviceId, Envelope envelope, IReadOnlySet<Guid> joinedDevices,
         Func<Guid, IReadOnlySet<Guid>, CancellationToken, Task> deliver, CancellationToken ct)
     {
         var header = ValidateEnvelope(deviceId, envelope);
+        if (joinedDevices.Count > MaximumRecipients) throw new PushRejectedException("Presence has too many receiving devices.");
         await devices.EnsureActiveAsync(userId, deviceId, ct);
         await projects.EnsureCanReadAsync(userId, header.ProjectId, ct);
 
         await using var projectDelivery = await deliveryGate.ProjectAsync(header.ProjectId, ct);
-        var accounts = await db.Memberships.Where(member => member.ProjectId == header.ProjectId)
-            .Select(member => member.UserId).ToListAsync(ct);
+        var candidates = joinedDevices.Append(deviceId).Distinct().ToArray();
+        var accounts = await db.Devices.Where(device => candidates.Contains(device.Id))
+            .Join(db.Memberships.Where(member => member.ProjectId == header.ProjectId), device => device.UserId, member => member.UserId,
+                (device, member) => member.UserId).Distinct().ToListAsync(ct);
         await using var accountDelivery = await deliveryGate.AccountsAsync(accounts.Append(userId), ct);
         await devices.EnsureActiveAsync(userId, deviceId, ct);
         await projects.EnsureCanReadAsync(userId, header.ProjectId, ct);
@@ -24,7 +29,7 @@ public sealed class PresenceAccess(SyncDbContext db, DeviceRegistry devices, Pro
             .Select(project => (long?)project.CurrentEpoch).SingleOrDefaultAsync(ct);
         if (epoch != header.Epoch)
             throw new PushRejectedException("The presence epoch is no longer current.");
-        var recipients = await db.Devices.Where(device => accounts.Contains(device.UserId) && device.RevokedAt == null &&
+        var recipients = await db.Devices.Where(device => candidates.Contains(device.Id) && accounts.Contains(device.UserId) && device.RevokedAt == null &&
             (device.SigningPublicKey != null || !db.Devices.Any(other => other.UserId == device.UserId && other.SigningPublicKey != null)))
             .Select(device => device.Id).ToListAsync(ct);
         if (!recipients.Contains(deviceId))

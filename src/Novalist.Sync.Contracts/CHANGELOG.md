@@ -21,7 +21,10 @@ the minor version.
   after two minutes. Confirmed update retries retain their original sequence.
 - `FieldLeaseRequest.AcquireBefore` bounds acquisition retries. New acquisitions
   must supply a fixed deadline no more than two minutes ahead and reuse it on
-  retries; renewals and edits retain the existing lease identity. Older clients
+  retries. `GetFieldLeaseTime` supplies the database clock for those deadlines,
+  avoiding dependence on the device clock. Renewals, edits, and release of an
+  existing lease can omit the deadline; cancellation before acquisition requires
+  the original deadline to reject delayed acquisition. Older clients
   without a deadline receive an explicit rejection. Package minor 1.8.0.
 
 - `NativeClientConfiguration.AuthenticationRequired` advertises optional relay

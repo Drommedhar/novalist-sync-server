@@ -125,12 +125,28 @@ public class ConnectionRegistryTests
         Add(user, device);
         var project = Guid.NewGuid();
         foreach (var connection in new[] { sender, joined, inactive }) _registry.JoinProject(connection.ConnectionId, project);
-        Assert.Equal([joined.ConnectionId], _registry.PresenceRecipients(project, new HashSet<Guid> { device }, sender.ConnectionId));
+        Assert.Equal([joined.ConnectionId], _registry.PresenceRecipients(project, new HashSet<Guid> { device }, _registry.PresenceTargets(project, sender.ConnectionId, 256)));
         _registry.LeaveProject(joined.ConnectionId, project);
-        Assert.Empty(_registry.PresenceRecipients(project, new HashSet<Guid> { device }, sender.ConnectionId));
+        Assert.Empty(_registry.PresenceRecipients(project, new HashSet<Guid> { device }, _registry.PresenceTargets(project, sender.ConnectionId, 256)));
         _registry.JoinProject(joined.ConnectionId, project);
         _registry.RevokeProject(user, project);
-        Assert.Empty(_registry.PresenceRecipients(project, new HashSet<Guid> { device }, sender.ConnectionId));
+        Assert.Empty(_registry.PresenceRecipients(project, new HashSet<Guid> { device }, _registry.PresenceTargets(project, sender.ConnectionId, 256)));
+    }
+
+    [Fact]
+    public void PresenceSnapshotDoesNotGrowAndRechecksDepartedConnections()
+    {
+        var user = Guid.NewGuid();
+        var device = Guid.NewGuid();
+        var project = Guid.NewGuid();
+        var first = Add(user, device);
+        _registry.JoinProject(first.ConnectionId, project);
+        var snapshot = _registry.PresenceTargets(project, "sender", 256);
+        var later = Add(user, device);
+        _registry.JoinProject(later.ConnectionId, project);
+        Assert.Equal([first.ConnectionId], _registry.PresenceRecipients(project, new HashSet<Guid> { device }, snapshot));
+        _registry.LeaveProject(first.ConnectionId, project);
+        Assert.Empty(_registry.PresenceRecipients(project, new HashSet<Guid> { device }, snapshot));
     }
 
     [Fact]
@@ -150,14 +166,14 @@ public class ConnectionRegistryTests
             _registry.JoinProject(connection.ConnectionId, otherProject);
         }
         _registry.RevokeProject(user, project);
-        Assert.Equal([other.ConnectionId], _registry.PresenceRecipients(project, active, "sender"));
-        Assert.Equivalent(new[] { joined.ConnectionId, other.ConnectionId }, _registry.PresenceRecipients(otherProject, active, "sender"));
+        Assert.Equal([other.ConnectionId], _registry.PresenceRecipients(project, active, _registry.PresenceTargets(project, "sender", 256)));
+        Assert.Equivalent(new[] { joined.ConnectionId, other.ConnectionId }, _registry.PresenceRecipients(otherProject, active, _registry.PresenceTargets(otherProject, "sender", 256)));
         _registry.LeaveProject(joined.ConnectionId, project);
         Assert.True(_registry.ProjectRevoked(joined.ConnectionId, project));
-        Assert.Equal([other.ConnectionId], _registry.PresenceRecipients(project, active, "sender"));
+        Assert.Equal([other.ConnectionId], _registry.PresenceRecipients(project, active, _registry.PresenceTargets(project, "sender", 256)));
         _registry.JoinProject(joined.ConnectionId, project);
         Assert.False(_registry.ProjectRevoked(joined.ConnectionId, project));
-        Assert.Equivalent(new[] { joined.ConnectionId, other.ConnectionId }, _registry.PresenceRecipients(project, active, "sender"));
+        Assert.Equivalent(new[] { joined.ConnectionId, other.ConnectionId }, _registry.PresenceRecipients(project, active, _registry.PresenceTargets(project, "sender", 256)));
     }
 
     private FakeHubCallerContext Add(Guid userId, Guid deviceId)

@@ -36,8 +36,10 @@ public sealed class UpdateLog(SyncDbContext db)
         if (duplicate is { } previous) return previous;
         if (project.CurrentEpoch != epoch)
             throw new PushRejectedException("The update epoch is no longer current. Refresh the project encryption keys.");
-        if (await db.ProjectEpochStages.AnyAsync(stage => stage.ProjectId == header.ProjectId && stage.PreviousEpoch == epoch &&
-            stage.CreatedAt > DateTimeOffset.UtcNow - ProjectEpochAccess.ReservationLifetime, cancellationToken))
+        if (await db.ProjectEpochStages.FromSqlInterpolated($"""
+            SELECT * FROM project_epoch_stages WHERE project_id = {header.ProjectId} AND previous_epoch = {epoch}
+                AND created_at > clock_timestamp() - {ProjectEpochAccess.ReservationLifetime}
+            """).AnyAsync(cancellationToken))
             throw new PushRejectedException("Project key rotation is in progress. Retry after the rotation finishes.");
 
         var owner = (int)MembershipRole.Owner;

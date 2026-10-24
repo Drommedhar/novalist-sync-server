@@ -15,6 +15,7 @@ public interface ISyncHub
     Task<IReadOnlyList<ProjectMember>> ListProjectMembers(Guid projectId);
     Task RemoveProjectMember(Guid projectId, Guid memberId);
     Task DeleteProject(Guid projectId);
+    Task<DateTimeOffset> GetFieldLeaseTime();
     Task<FieldLeaseGrant> AcquireFieldLease(FieldLeaseRequest request);
     Task<FieldLeaseGrant?> RenewFieldLease(FieldLeaseRequest request);
     Task<bool> ReleaseFieldLease(FieldLeaseRequest request);

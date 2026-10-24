@@ -1,15 +1,42 @@
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.DependencyInjection;
 using Novalist.Sync.Contracts;
 using Novalist.Sync.Server.Data;
 using Novalist.Sync.Server.Hubs;
 using Novalist.Sync.Server.Tests.Infrastructure;
+using Novalist.Sync.Server.Updates;
 
 namespace Novalist.Sync.Server.Tests.Hubs;
 
 public sealed class PresenceDeliveryTests(DatabaseFixture database)
 {
+    [Fact]
+    public async Task PresenceCountsEveryConnectionAgainstItsFanoutLimitEvenForTheSameDevice()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var server = new SyncServer(database);
+        var user = await database.CreateUserAsync();
+        var device = await database.CreateDeviceAsync(user.Id);
+        var project = await database.CreateProjectAsync((user.Id, MembershipRole.Owner));
+        await using var hub = server.CreateHubConnection(TestTokens.Create(user.Subject), device);
+        await hub.StartAsync(ct);
+        var registry = server.Services.GetRequiredService<ConnectionRegistry>();
+        var contexts = Enumerable.Range(0, PresenceAccess.MaximumRecipients + 1).Select(_ => new FakeHubCallerContext()).ToArray();
+        foreach (var context in contexts)
+        {
+            registry.Add(context, user.Id, device);
+            registry.JoinProject(context.ConnectionId, project);
+        }
+        var envelope = TestData.Envelope(project, device, 1, MsgType.Presence);
+        var error = await Assert.ThrowsAsync<HubException>(() => hub.InvokeAsync("PublishPresence", envelope, ct));
+        Assert.Contains("256 active recipients", error.Message);
+        Assert.Equal(1, await hub.InvokeAsync<long>("Push", TestData.Envelope(project, device, 2), ct));
+        registry.Remove(contexts[^1].ConnectionId);
+        await hub.InvokeAsync("PublishPresence", envelope, ct);
+    }
+
     [Fact]
     public async Task SlowPresenceReceivesSignalRCancellationAndDoesNotPreventTheNextEdit()
     {

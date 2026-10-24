@@ -64,12 +64,13 @@ public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess p
         var project = await LockProjectAsync(request.ProjectId, ct);
         await projects.EnsureIsOwnerAsync(user, request.ProjectId, ct);
         CheckBoundary(project, request.PreviousEpoch, request.PreviousServerSeq);
-        await db.ProjectEpochStages.Where(value => value.ProjectId == request.ProjectId && value.CreatedAt <= DateTimeOffset.UtcNow - ReservationLifetime).ExecuteDeleteAsync(ct);
+        var now = await DatabaseTimeAsync(ct);
+        await db.ProjectEpochStages.Where(value => value.ProjectId == request.ProjectId && value.CreatedAt <= now - ReservationLifetime).ExecuteDeleteAsync(ct);
         await EnsureReservationAvailableAsync(request.ProjectId, request.RotationId, ct);
         await db.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO project_epoch_stages (id, project_id, device_id, previous_epoch, previous_server_seq, created_at, count)
             VALUES ({request.RotationId}, {request.ProjectId}, {device}, {(long)request.PreviousEpoch},
-                {request.PreviousServerSeq}, {DateTimeOffset.UtcNow}, 0)
+                {request.PreviousServerSeq}, {now}, 0)
             ON CONFLICT (id) DO NOTHING
             """, ct);
         var stage = await db.ProjectEpochStages.AsNoTracking().SingleAsync(value => value.Id == request.RotationId, ct);
@@ -120,10 +121,14 @@ public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess p
     private async Task<ProjectEpochStage> LockStageAsync(Guid rotation, Guid device, CancellationToken ct)
     {
         var stage = (await db.ProjectEpochStages.FromSqlInterpolated($"SELECT * FROM project_epoch_stages WHERE id = {rotation} FOR UPDATE").ToListAsync(ct)).SingleOrDefault();
-        if (stage is null || stage.DeviceId != device || stage.CreatedAt <= DateTimeOffset.UtcNow - ReservationLifetime)
+        var now = await DatabaseTimeAsync(ct);
+        if (stage is null || stage.DeviceId != device || stage.CreatedAt <= now - ReservationLifetime)
             throw new ConflictException("The project transition is unavailable or expired.");
         return stage;
     }
+
+    private Task<DateTimeOffset> DatabaseTimeAsync(CancellationToken ct) =>
+        db.Database.SqlQuery<DateTimeOffset>($"SELECT clock_timestamp() AS \"Value\"").SingleAsync(ct);
 
     private static void CheckBoundary(Project project, long epoch, long sequence)
     {

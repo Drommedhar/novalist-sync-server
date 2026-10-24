@@ -4,6 +4,12 @@ namespace Novalist.Sync.Server.Hubs;
 
 public sealed partial class SyncHub
 {
+    public async Task<DateTimeOffset> GetFieldLeaseTime()
+    {
+        await EnsureDeviceActiveAsync(Context.ConnectionAborted);
+        return await fieldLeases.TimeAsync(Context.ConnectionAborted);
+    }
+
     public async Task<FieldLeaseGrant> AcquireFieldLease(FieldLeaseRequest request)
     {
         await EnsureDeviceActiveAsync(Context.ConnectionAborted);

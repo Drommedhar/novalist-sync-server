@@ -24,14 +24,11 @@ public sealed class DeviceRecoveryTests(DatabaseFixture database)
         var account = await http.GetFromJsonAsync<DeviceRegistrationContext>(Protocol.DeviceRegistrationPath, ct);
         Assert.NotNull(account);
         using var signing = Key.Create(SignatureAlgorithm.Ed25519);
-        using var recoverySigning = Key.Create(SignatureAlgorithm.Ed25519);
+        using var recoveryDevice = new TestRecoveryDevice();
         using var receiving = Key.Create(KeyAgreementAlgorithm.X25519);
-        using var recoveryReceiving = Key.Create(KeyAgreementAlgorithm.X25519);
         var root = Keys(signing, receiving);
-        var recovery = Keys(recoverySigning, recoveryReceiving);
-        var request = new VerifiedDeviceRegistration(root,
-            SignatureAlgorithm.Ed25519.Sign(signing, DeviceProof.EncodeRegistration(SyncServer.PublicUrl, account.UserId, root)),
-            RecoveryDevice: TestEnrollment.Recovery(account.UserId, root.DeviceId, signing, recovery, recoverySigning));
+        var recovery = recoveryDevice.Keys;
+        var request = TestEnrollment.First(account.UserId, root, signing, recoveryDevice);
         TestEnrollment.Authorize(http, root.SigningPublicKey);
         using var enrolled = await http.PutAsJsonAsync(Protocol.VerifiedDevicesPath, request, ct);
         Assert.Equal(HttpStatusCode.NoContent, enrolled.StatusCode);
@@ -47,7 +44,7 @@ public sealed class DeviceRecoveryTests(DatabaseFixture database)
         var linked = unlinked with
         {
             LinkedByDeviceId = recovery.DeviceId,
-            LinkingSignature = SignatureAlgorithm.Ed25519.Sign(recoverySigning,
+            LinkingSignature = SignatureAlgorithm.Ed25519.Sign(recoveryDevice.Signing,
                 DeviceProof.EncodeLink(SyncServer.PublicUrl, account.UserId, recovery.DeviceId, replacement))
         };
         using var recovered = await http.PutAsJsonAsync(Protocol.VerifiedDevicesPath, linked, ct);
@@ -69,7 +66,7 @@ public sealed class DeviceRecoveryTests(DatabaseFixture database)
         Assert.Equal(HttpStatusCode.Forbidden, resetAll.StatusCode);
         var revokedRecovery = new VerifiedDeviceRegistration(next,
             SignatureAlgorithm.Ed25519.Sign(replacementSigning, DeviceProof.EncodeRegistration(SyncServer.PublicUrl, account.UserId, next)),
-            recovery.DeviceId, SignatureAlgorithm.Ed25519.Sign(recoverySigning, DeviceProof.EncodeLink(SyncServer.PublicUrl, account.UserId, recovery.DeviceId, next)));
+            recovery.DeviceId, SignatureAlgorithm.Ed25519.Sign(recoveryDevice.Signing, DeviceProof.EncodeLink(SyncServer.PublicUrl, account.UserId, recovery.DeviceId, next)));
         using var denied = await http.PutAsJsonAsync(Protocol.VerifiedDevicesPath, revokedRecovery, ct);
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
     }

@@ -21,11 +21,13 @@ public sealed class InvitationActivationTests(DatabaseFixture database)
         await using var server = new SyncServer(database, clock);
         using var ownerKey = Key.Create(SignatureAlgorithm.Ed25519);
         using var guestKey = Key.Create(SignatureAlgorithm.Ed25519);
+        using var ownerRecovery = new TestRecoveryDevice();
+        using var guestRecovery = new TestRecoveryDevice();
         var ownerToken = TestTokens.Create(Guid.NewGuid().ToString());
         var guestToken = TestTokens.Create(Guid.NewGuid().ToString());
         var guestId = Guid.NewGuid();
-        await using var owner = await ConnectAsync(server, ownerToken, Guid.NewGuid(), ownerKey, ct);
-        await using var guest = await ConnectAsync(server, guestToken, guestId, guestKey, ct);
+        await using var owner = await ConnectAsync(server, ownerToken, Guid.NewGuid(), ownerKey, ownerRecovery, ct);
+        await using var guest = await ConnectAsync(server, guestToken, guestId, guestKey, guestRecovery, ct);
         var project = Guid.NewGuid();
         var invitation = Guid.NewGuid();
         await owner.InvokeAsync("CreateProject", project, ct);
@@ -72,7 +74,8 @@ public sealed class InvitationActivationTests(DatabaseFixture database)
         }
     }
 
-    private static async Task<HubConnection> ConnectAsync(SyncServer server, string token, Guid deviceId, Key signing, CancellationToken ct)
+    private static async Task<HubConnection> ConnectAsync(SyncServer server, string token, Guid deviceId, Key signing,
+        TestRecoveryDevice recoveryDevice, CancellationToken ct)
     {
         using var http = server.CreateClient(token);
         var context = await http.GetFromJsonAsync<DeviceRegistrationContext>("/devices/registration", ct)
@@ -80,7 +83,7 @@ public sealed class InvitationActivationTests(DatabaseFixture database)
         using var receiving = Key.Create(KeyAgreementAlgorithm.X25519);
         var keys = new DevicePublicKeys(deviceId, signing.PublicKey.Export(KeyBlobFormat.RawPublicKey), receiving.PublicKey.Export(KeyBlobFormat.RawPublicKey));
         TestEnrollment.Authorize(http, keys.SigningPublicKey);
-        using var response = await http.PutAsJsonAsync("/devices/verified", TestEnrollment.First(context.UserId, keys, signing), ct);
+        using var response = await http.PutAsJsonAsync("/devices/verified", TestEnrollment.First(context.UserId, keys, signing, recoveryDevice), ct);
         response.EnsureSuccessStatusCode();
         var hub = server.CreateHubConnection(token, deviceId);
         try { await AuthenticateAsync(hub, signing, ct); return hub; }
