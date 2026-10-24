@@ -814,13 +814,16 @@ OIDC authenticates the **user**, not the device. Verified devices additionally
 answer a fresh `GetDeviceChallenge` using `AuthenticateDevice` before project,
 update, presence or invitation operations. Public keys cannot be replaced under
 an existing device ID. The first verified registration serializes on the account
-and requires an access token with `amr` containing `mfa`, a single `auth_time`
-within the last five minutes, and `cnf.jkt` bound to the new device's Ed25519
-signing key. The provider must issue these signed claims after fresh MFA and
-proof of that key; a generic bearer token with an MFA claim is insufficient.
-The thumbprint follows the canonical OKP JWK representation in
-[RFC 8037 Appendix A.3](https://www.rfc-editor.org/rfc/rfc8037.html#appendix-A.3).
-Registration already proves possession of that key through its signature.
+and requires fresh MFA bound to both ordinary and recovery public-key records.
+The client obtains a five-minute, one-use enrollment challenge, then uses its
+nonce for a new authorization-code/PKCE browser login with `max_age=0`.
+The server verifies the signed ID token's issuer, native-client audience,
+account subject, nonce, expiry, `amr` containing `mfa`, and a single `auth_time`
+within the last five minutes. Ordinary bearer access tokens authenticate the
+API calls. Registration signatures prove possession of the device keys.
+An existing `cnf.jkt` access-token flow remains accepted, but is no longer the
+only enrollment path. See [device-enrollment.md](device-enrollment.md) for client
+entry points, provider configuration, challenge limits, and metadata exposure.
 Existing registrations can be retried without repeating enrollment or creating
 another recovery device. Later devices require a signature from an active
 verified device of that account, including its pre-provisioned recovery device.
@@ -925,10 +928,10 @@ Roles per membership:
 ## Relay-only desktop integration
 
 The Novalist desktop integration now uses the live packet relay described in
-[relay.md](relay.md). This is the default mode and supersedes this document's
+[relay.md](relay.md). Enable it with `Relay:Enabled=true`; it supersedes this document's
 storage and offline-joining design for that integration. It maps no persistence
 endpoints and requires no database. The preceding design remains documentation
-for the explicitly enabled legacy persistence mode (`Relay:Enabled=false`).
+for persistence mode, which remains the default (`Relay:Enabled=false`).
 
 Relay authentication is optional through `Relay:RequireAuthentication=false`;
 the default remains true. Anonymous hosts prove route ownership with a random

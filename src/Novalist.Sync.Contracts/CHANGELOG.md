@@ -10,10 +10,17 @@ the minor version.
 
 ### Added
 
+- `RelayProtocol` publishes the connection-renewal header and endpoint. Renewed
+  access tokens update existing relay connections while preserving session IDs.
+- `DeviceEnrollmentRequest`, `DeviceEnrollmentChallenge`, `DeviceEnrollmentProof`
+  and `Protocol.DeviceEnrollmentPath` support fresh browser MFA with a signed
+  ID-token nonce bound to ordinary and recovery public keys. API access tokens
+  can remain ordinary bearer tokens.
+
 - `DeviceRecoveryRegistration` and `VerifiedDeviceRegistration.RecoveryDevice`
   provision a public recovery identity atomically with the first verified device.
-  First enrollment requires a recent MFA token bound to the ordinary signing
-  key through `cnf.jkt`; existing device retries and signed links retain their
+  First enrollment requires recent MFA bound through the one-use browser
+  challenge or a provider-issued `cnf.jkt`; existing device retries and signed links retain their
   authentication flow. Only public keys and proofs cross the API.
 
 - `ReserveProjectEpoch` freezes the update boundary before checkpoint creation;

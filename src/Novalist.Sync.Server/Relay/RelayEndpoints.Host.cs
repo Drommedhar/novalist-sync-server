@@ -14,12 +14,13 @@ public static partial class RelayEndpoints
         var owner = RelayIdentity.From(context);
         if (!quotas.TryReserve(true, out var reservation, out var status, owner)) { Reject(context, status); return; }
         using var reserved = reservation;
-        using var socket = await AcceptSocketAsync(context);
-        if (socket is null) return;
         var session = sessions.Create(owner, proof);
         await using var lifetime = new RelayLifetime(context, session.Stop.Token);
+        WebSocket? socket = null;
         try
         {
+            socket = await AcceptSocketAsync(context);
+            if (socket is null) return;
             await SendIdAsync(socket, session.Id, lifetime.Token);
             await RunHostControlAsync(context, socket, session, lifetime);
         }
@@ -28,7 +29,11 @@ public static partial class RelayEndpoints
         finally
         {
             sessions.Remove(session);
-            if (socket.State != WebSocketState.Closed) socket.Abort();
+            if (socket is not null)
+            {
+                if (socket.State != WebSocketState.Closed) socket.Abort();
+                socket.Dispose();
+            }
         }
     }
 

@@ -17,6 +17,7 @@ public sealed class RelayAdmissionTests
         await using var server = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
+            builder.UseSetting("Relay:Enabled", "true");
             builder.UseSetting("Relay:RequireAuthentication", "false");
             builder.UseSetting("Relay:RequestsPerMinute", allowance);
         });
@@ -81,6 +82,7 @@ public sealed class RelayAdmissionTests
         await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
+            builder.UseSetting("Relay:Enabled", "true");
             builder.UseSetting("Relay:RequireAuthentication", "false");
             builder.UseSetting("Relay:RequestsPerMinutePerIp", "1");
             builder.UseSetting("Relay:MaxQuotaEntries", "1");

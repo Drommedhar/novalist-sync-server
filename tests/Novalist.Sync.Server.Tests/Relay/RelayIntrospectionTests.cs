@@ -85,6 +85,7 @@ public sealed class RelayIntrospectionTests
         {
             options.CheckIntervalSeconds = 5;
             options.TimeoutSeconds = 1;
+            options.GracePeriodSeconds = 0;
         }, response: async (_, ct) =>
         {
             if (Volatile.Read(ref unavailable) == 1) await Task.Delay(Timeout.InfiniteTimeSpan, ct);

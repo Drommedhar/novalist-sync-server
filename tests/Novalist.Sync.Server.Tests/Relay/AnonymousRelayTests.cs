@@ -20,6 +20,7 @@ public sealed class AnonymousRelayTests
         await using var server = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
+            builder.UseSetting("Relay:Enabled", "true");
             builder.UseSetting("Relay:RequireAuthentication", "false");
         });
         server.UseKestrel(0);
@@ -30,13 +31,15 @@ public sealed class AnonymousRelayTests
         await Assert.ThrowsAsync<WebSocketException>(() => host.ConnectAsync(address, TestContext.Current.CancellationToken));
     }
 
-    [Fact]
-    public async Task AnonymousRelaySettingDoesNotDisableLegacyAuthentication()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AnonymousRelaySettingDoesNotDisableLegacyAuthentication(bool explicitDefault)
     {
         await using var server = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Production");
-            builder.UseSetting("Relay:Enabled", "false");
+            if (explicitDefault) builder.UseSetting("Relay:Enabled", "false");
             builder.UseSetting("Relay:RequireAuthentication", "false");
         });
         Assert.Throws<OptionsValidationException>(() => server.CreateClient());
@@ -52,6 +55,7 @@ public sealed class AnonymousRelayTests
         await using var server = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
+            builder.UseSetting("Relay:Enabled", "true");
             builder.UseSetting("Relay:RequireAuthentication", "false");
         });
         server.UseKestrel(0);
@@ -97,6 +101,7 @@ public sealed class AnonymousRelayTests
         await using var server = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Production");
+            builder.UseSetting("Relay:Enabled", "true");
             builder.UseSetting("Relay:RequireAuthentication", "false");
         });
         using var client = server.CreateClient();

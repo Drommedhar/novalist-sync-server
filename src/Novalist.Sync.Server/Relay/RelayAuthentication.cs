@@ -5,7 +5,7 @@ namespace Novalist.Sync.Server.Relay;
 internal static class RelayAuthentication
 {
     internal static bool Required(IConfiguration configuration) =>
-        !configuration.GetValue("Relay:Enabled", true) || configuration.GetValue("Relay:RequireAuthentication", true);
+        !configuration.GetValue("Relay:Enabled", false) || configuration.GetValue("Relay:RequireAuthentication", true);
 
     internal static bool Required(HttpContext context) => Required(context.RequestServices.GetRequiredService<IConfiguration>());
 

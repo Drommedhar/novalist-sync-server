@@ -45,6 +45,7 @@ internal sealed class RelayTestServer : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
+        builder.UseSetting("Relay:Enabled", "true");
         builder.UseSetting("Relay:RequireAuthentication", (!anonymous).ToString());
         builder.UseSetting("Relay:Introspection:Endpoint", "https://idp.test/introspect");
         builder.UseSetting("Relay:Introspection:ClientId", "relay-test");

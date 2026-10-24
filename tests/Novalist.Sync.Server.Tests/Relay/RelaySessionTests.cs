@@ -10,7 +10,7 @@ public sealed class RelaySessionTests
     [InlineData(true)]
     public async Task HostControlSendsACloseFrameForNormalShutdownAndExpiredAuthorization(bool expired)
     {
-        await using var server = new RelayTestServer();
+        await using var server = new RelayTestServer(introspection: options => options.GracePeriodSeconds = 0);
         using var control = server.Socket(expires: expired ? DateTime.UtcNow.AddSeconds(3) : null);
         await server.ConnectAsync(control, "host");
         await server.ReadIdAsync(control);
@@ -26,7 +26,7 @@ public sealed class RelaySessionTests
     [Fact]
     public async Task AuthenticatedEndpointsRejectMissingTokensAndUnknownSessions()
     {
-        await using var server = new RelayTestServer();
+        await using var server = new RelayTestServer(introspection: options => options.GracePeriodSeconds = 0);
         await server.RejectedAsync("host", HttpStatusCode.Unauthorized, null);
         await server.RejectedAsync($"sessions/{Guid.NewGuid()}/guest", HttpStatusCode.Unauthorized, null);
         await server.RejectedAsync($"sessions/{Guid.NewGuid()}/routes/{Guid.NewGuid()}", HttpStatusCode.Unauthorized, null);
@@ -37,7 +37,7 @@ public sealed class RelaySessionTests
     [Fact]
     public async Task OwnerAloneCanAttachAndHostDisconnectClosesRoutes()
     {
-        await using var server = new RelayTestServer();
+        await using var server = new RelayTestServer(introspection: options => options.GracePeriodSeconds = 0);
         using var control = server.Socket();
         await server.ConnectAsync(control, "host");
         var session = await server.ReadIdAsync(control);
@@ -117,7 +117,7 @@ public sealed class RelaySessionTests
     [InlineData("attach")]
     public async Task EveryAuthenticatedSocketClosesAtItsTokenExpiry(string expiring)
     {
-        await using var server = new RelayTestServer();
+        await using var server = new RelayTestServer(introspection: options => options.GracePeriodSeconds = 0);
         var expiry = DateTime.UtcNow.AddSeconds(3);
         using var control = server.Socket(expires: expiring == "control" ? expiry : null);
         await server.ConnectAsync(control, "host");
@@ -140,7 +140,7 @@ public sealed class RelaySessionTests
     [Fact]
     public async Task ExpiredTokenCannotUpgradeWithinTheJwtClockSkewAllowance()
     {
-        await using var server = new RelayTestServer();
+        await using var server = new RelayTestServer(introspection: options => options.GracePeriodSeconds = 0);
         using var socket = server.Socket(expires: DateTime.UtcNow.AddSeconds(-1));
         await Assert.ThrowsAsync<WebSocketException>(() => server.ConnectAsync(socket, "host"));
         Assert.Equal(HttpStatusCode.Unauthorized, socket.HttpStatusCode);

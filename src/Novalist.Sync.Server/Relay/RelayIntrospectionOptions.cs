@@ -9,6 +9,7 @@ public sealed class RelayIntrospectionOptions
     public string ClientSecret { get; set; } = "";
     [Range(5.0, 30)] public double CheckIntervalSeconds { get; set; } = 30;
     [Range(1.0, 5)] public double TimeoutSeconds { get; set; } = 5;
+    [Range(0.0, 900)] public double GracePeriodSeconds { get; set; } = 300;
     [Range(1, 256)] public int MaxConcurrentRequests { get; set; } = 16;
     [Range(128, 1048576)] public int MaxResponseBytes { get; set; } = 16384;
 

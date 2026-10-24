@@ -22,17 +22,22 @@ internal sealed class RelayTokenIntrospection : IDisposable
         requests = new(options.MaxConcurrentRequests);
     }
 
-    public async Task<RelayTokenState> CheckAsync(HttpContext context, CancellationToken ct)
+    public Task<RelayTokenState> CheckAsync(HttpContext context, CancellationToken ct)
     {
         if (!AuthenticationHeaderValue.TryParse(context.Request.Headers.Authorization, out var authorization) ||
             !string.Equals(authorization.Scheme, "Bearer", StringComparison.OrdinalIgnoreCase) || authorization.Parameter is null)
-            return RelayTokenState.Inactive;
+            return Task.FromResult(RelayTokenState.Inactive);
+        return CheckAsync(authorization.Parameter, RelayIdentity.From(context), ct);
+    }
+
+    public async Task<RelayTokenState> CheckAsync(string token, RelayIdentity identity, CancellationToken ct)
+    {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(options.TimeoutSeconds), clock);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
         try
         {
             await requests.WaitAsync(lifetime.Token);
-            try { return await RequestAsync(authorization.Parameter, RelayIdentity.From(context), lifetime.Token); }
+            try { return await RequestAsync(token, identity, lifetime.Token); }
             finally { requests.Release(); }
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return RelayTokenState.Unavailable; }

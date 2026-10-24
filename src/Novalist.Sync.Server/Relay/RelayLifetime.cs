@@ -6,8 +6,9 @@ namespace Novalist.Sync.Server.Relay;
 internal sealed class RelayLifetime : IAsyncDisposable
 {
     private readonly CancellationTokenSource stop;
-    private readonly Task expiry;
     private readonly Task monitor;
+    private readonly RelayAuthorizations? connections;
+    private readonly RelayAuthorization? authorization;
     private int tokenState;
     public CancellationToken Token => stop.Token;
     public bool IsCancellationRequested => stop.IsCancellationRequested;
@@ -18,7 +19,11 @@ internal sealed class RelayLifetime : IAsyncDisposable
         var shutdown = context.RequestServices.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping;
         stop = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, session, route, shutdown);
         var authenticated = RelayAuthentication.Required(context);
-        expiry = authenticated ? ExpireAsync(context) : Task.CompletedTask;
+        if (authenticated)
+        {
+            connections = context.RequestServices.GetRequiredService<RelayAuthorizations>();
+            authorization = connections.Register(context);
+        }
         monitor = authenticated ? MonitorAsync(context) : Task.CompletedTask;
     }
 
@@ -27,16 +32,6 @@ internal sealed class RelayLifetime : IAsyncDisposable
         seconds is >= 0 and <= 253402300799 ? DateTimeOffset.FromUnixTimeSeconds(seconds) : DateTimeOffset.MinValue;
 
     public Task CancelAsync() => stop.CancelAsync();
-
-    private async Task ExpireAsync(HttpContext context)
-    {
-        try
-        {
-            await RelayTokenExpiry.WaitAsync(ExpiresAt(context), context.RequestServices.GetRequiredService<TimeProvider>(), stop.Token);
-            await EndAsync(RelayTokenState.Inactive);
-        }
-        catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
-    }
 
     private Task EndAsync(RelayTokenState state)
     {
@@ -47,15 +42,27 @@ internal sealed class RelayLifetime : IAsyncDisposable
     private async Task MonitorAsync(HttpContext context)
     {
         var service = context.RequestServices.GetRequiredService<RelayTokenIntrospection>();
-        var interval = context.RequestServices.GetRequiredService<IOptions<RelayIntrospectionOptions>>().Value.CheckIntervalSeconds;
+        var options = context.RequestServices.GetRequiredService<IOptions<RelayIntrospectionOptions>>().Value;
         var clock = context.RequestServices.GetRequiredService<TimeProvider>();
+        var connection = authorization ?? throw new InvalidOperationException("Missing relay authorization.");
+        var grace = TimeSpan.FromSeconds(options.GracePeriodSeconds);
         try
         {
             while (true)
             {
-                await Task.Delay(TimeSpan.FromSeconds(interval), clock, stop.Token);
-                var state = await service.CheckAsync(context, stop.Token);
+                var credential = connection.Read();
+                var untilExpiry = credential.ExpiresAt - clock.GetUtcNow() + grace;
+                var delay = TimeSpan.FromSeconds(options.CheckIntervalSeconds);
+                if (untilExpiry < delay) delay = untilExpiry;
+                if (delay > TimeSpan.Zero) await Task.Delay(delay, clock, stop.Token);
+                credential = connection.Read();
+                var result = clock.GetUtcNow() >= credential.ExpiresAt
+                    ? RelayTokenState.Unavailable
+                    : await service.CheckAsync(credential.Token, connection.Identity, stop.Token);
+                var state = connection.Observe(credential, result, clock.GetUtcNow(), grace);
                 if (state == RelayTokenState.Active) continue;
+                if (state == RelayTokenState.Unavailable && clock.GetUtcNow() - credential.ExpiresAt >= grace)
+                    state = RelayTokenState.Inactive;
                 await EndAsync(state);
                 return;
             }
@@ -67,7 +74,8 @@ internal sealed class RelayLifetime : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await stop.CancelAsync();
-        await Task.WhenAll(expiry, monitor);
+        if (authorization is not null && connections is not null) connections.Remove(authorization);
+        await monitor;
         stop.Dispose();
     }
 }

@@ -14,11 +14,14 @@ public static class RelayServices
         services.AddHttpClient("RelayIntrospection", client => client.Timeout = Timeout.InfiniteTimeSpan)
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
             {
-                AllowAutoRedirect = false, UseCookies = false, MaxResponseHeadersLength = 16
+                AllowAutoRedirect = false,
+                UseCookies = false,
+                MaxResponseHeadersLength = 16
             })
             .RedactLoggedHeaders(_ => true);
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<RelayTokenIntrospection>();
+        services.AddSingleton<RelayAuthorizations>();
         services.AddSingleton<RelayQuotas>();
         services.AddSingleton<RelaySessions>();
         return services.AddRelayTransportSecurity(configuration);

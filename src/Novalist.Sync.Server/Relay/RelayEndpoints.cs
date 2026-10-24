@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using Novalist.Sync.Contracts;
 
 namespace Novalist.Sync.Server.Relay;
 
@@ -12,6 +13,7 @@ public static partial class RelayEndpoints
         endpoints.MapGet("/host", HostAsync);
         endpoints.MapGet("/sessions/{sessionId:guid}/guest", GuestAsync);
         endpoints.MapGet("/sessions/{sessionId:guid}/routes/{routeId:guid}", AttachAsync);
+        app.MapPost(RelayProtocol.RenewalPath, RenewAsync).RequireAuthorization();
         return app;
     }
 

@@ -10,7 +10,7 @@ using Novalist.Sync.Server.Relay;
 
 var builder = WebApplication.CreateBuilder(args);
 
-var relayEnabled = builder.Configuration.GetValue("Relay:Enabled", true);
+var relayEnabled = builder.Configuration.GetValue("Relay:Enabled", false);
 if (relayEnabled)
 {
     builder.Services.AddRelay(builder.Configuration);
@@ -35,6 +35,8 @@ else
     builder.Services.AddScoped<DeviceRegistry>();
     builder.Services.AddSingleton<DeviceProofServer>();
     builder.Services.AddSingleton<DeviceEnrollmentPolicy>();
+    builder.Services.AddSingleton<DeviceEnrollmentChallenges>();
+    builder.Services.AddSingleton<DeviceEnrollmentTokens>();
     builder.Services.AddScoped<VerifiedDeviceEnrollment>();
     builder.Services.AddScoped<ProjectAccess>();
     builder.Services.AddScoped<ProjectEpochAccess>();
@@ -79,6 +81,7 @@ else
     app.MapHub<SyncHub>(Protocol.HubPath);
     app.MapDeviceEndpoints();
     app.MapVerifiedDeviceEndpoints();
+    app.MapDeviceEnrollmentEndpoint();
     app.MapInvitationEndpoints();
 }
 app.MapNativeClientEndpoint();

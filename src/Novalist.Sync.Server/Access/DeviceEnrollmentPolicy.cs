@@ -12,15 +12,20 @@ public sealed class DeviceEnrollmentPolicy(TimeProvider clock)
 {
     public void Authorize(ClaimsPrincipal principal, DevicePublicKeys keys)
     {
+        AuthorizeMfa(principal);
+        var confirmations = principal.FindAll("cnf").ToArray();
+        if (confirmations.Length != 1 || !MatchesKey(confirmations[0].Value, keys.SigningPublicKey))
+            throw new AccessDeniedException("The enrollment token must be bound to this device's signing key.");
+    }
+
+    public void AuthorizeMfa(ClaimsPrincipal principal)
+    {
         var times = principal.FindAll("auth_time").ToArray();
         var now = clock.GetUtcNow().ToUnixTimeSeconds();
         if (principal.Identity?.IsAuthenticated != true || !principal.FindAll("amr").Any(IsMfa) || times.Length != 1 ||
             !long.TryParse(times[0].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var authenticated) ||
             authenticated < now - 300 || authenticated > now + 30)
             throw new AccessDeniedException("First device enrollment requires multi-factor authentication within the last five minutes.");
-        var confirmations = principal.FindAll("cnf").ToArray();
-        if (confirmations.Length != 1 || !MatchesKey(confirmations[0].Value, keys.SigningPublicKey))
-            throw new AccessDeniedException("The enrollment token must be bound to this device's signing key.");
     }
 
     public static string SigningKeyThumbprint(byte[] publicKey)

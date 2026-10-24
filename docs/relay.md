@@ -1,9 +1,10 @@
 # Live packet relay
 
-The default server mode relays packets only. It does not register a database,
+Relay mode is opt-in (`Relay:Enabled=false` by default). Set `Relay__Enabled=true`
+to forward packets without registering a database,
 store project files, checkpoints, encrypted update history or offline queues.
-Existing persistence endpoints are not mapped. The old implementation remains
-available only with the explicit compatibility setting `Relay:Enabled=false`.
+Existing persistence endpoints are not mapped in relay mode. With relay disabled,
+the persistent service and its database configuration remain in use.
 
 Authentication is required by default (`Relay:RequireAuthentication=true`), using
 the existing OIDC Bearer settings and native client sign-in configuration.
@@ -34,11 +35,16 @@ an HTTP request cannot undo credentials already transmitted over that connection
 See [ASP.NET Core proxy configuration](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/proxy-load-balancer?view=aspnetcore-10.0).
 
 When authentication is required, all WebSocket endpoints require a valid access
-token in the Authorization header with a future `exp` claim. Each control, guest
-and attachment connection closes at that token's expiry, without extending it by
-the JWT validation clock skew. Expiry of the control connection ends its session
-and all routes; clients must establish a new session using a fresh token. Expiry
-of a guest or attachment closes only its route. In anonymous mode, the host generates a fresh
+token in the Authorization header with a future `exp` claim. Each upgraded
+connection returns `X-Novalist-Relay-Connection`, an opaque renewal identifier.
+Clients obtain new access tokens using their locally held refresh token and send
+`POST /relay/v1/connections/{id}/token` with the new Bearer token. Successful JWT
+validation, identity matching and introspection update that connection in place
+and return 204. The host keeps its session ID and invitations; both route sockets
+renew independently. Refresh tokens never reach the relay. Rejected renewals do
+not replace the current credentials. Earlier credentials cannot overwrite newer
+ones, and a stale introspection result cannot terminate a renewed connection.
+In anonymous mode, the host generates a fresh
 256-bit random capability, encoded as 64 hexadecimal characters, and sends it in
 `X-Novalist-Relay-Host` on its control connection and each route attachment.
 Uppercase, lowercase and mixed-case hex encode the same capability. The server
@@ -174,18 +180,23 @@ Missing or unsafe configuration prevents authenticated relay startup. Anonymous
 relay mode requires no introspection endpoint or credentials; persistent mode's
 configuration is unchanged.
 
-Provider failures fail closed: an initial timeout, network error, malformed or
+An initial timeout, network error, malformed or
 oversized response returns 503 without upgrading. An inactive token returns 401.
-A failed periodic check closes the existing connection. The check deadline
-includes waiting for the request-concurrency permit, response headers and body.
-With the defaults, a provider-reported revocation or outage is observed within
-30 seconds plus at most the five-second request deadline. JWT expiry closes a
-connection independently of that polling interval.
+A failed periodic check preserves an existing connection for up to
+`GracePeriodSeconds` since its last successful verification, and never beyond
+that grace period after token expiry. Expired tokens are not polled as though
+they were revoked; the client can replace them during the grace period. An
+explicit inactive response terminates the connection immediately after the
+check. Provider-reported revocation is observed within 30 seconds plus the
+five-second request deadline by default. Grace exhaustion is checked on the
+next monitor tick. New connections and renewals never receive an outage grace.
+The check deadline includes concurrency-permit waits, response headers and body.
 
 | Setting under `Relay:Introspection` | Default | Bound |
 | --- | ---: | --- |
 | `CheckIntervalSeconds` | 30 | 5–30 seconds between checks |
 | `TimeoutSeconds` | 5 | 1–5 seconds for a check |
+| `GracePeriodSeconds` | 300 | 0–900 seconds; zero disables grace |
 | `MaxConcurrentRequests` | 16 | Maximum simultaneous provider requests |
 | `MaxResponseBytes` | 16384 | Maximum response-body bytes |
 

@@ -18,6 +18,7 @@ public sealed class RelayIntrospectionConfigurationTests
         await using var server = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
+            builder.UseSetting("Relay:Enabled", "true");
             builder.UseSetting("Relay:Introspection:Endpoint", "https://idp.test/introspect");
             builder.UseSetting("Relay:Introspection:ClientId", "relay-test");
             builder.UseSetting("Relay:Introspection:ClientSecret", "relay-test-secret");
@@ -35,6 +36,7 @@ public sealed class RelayIntrospectionConfigurationTests
         await using var server = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
+            builder.UseSetting("Relay:Enabled", "true");
             builder.UseSetting("Relay:Introspection:Endpoint", "https://idp.test/introspect");
             builder.UseSetting("Relay:Introspection:ClientId", "relay-test");
             builder.UseSetting("Relay:Introspection:ClientSecret", "relay-test-secret");
@@ -54,6 +56,7 @@ public sealed class RelayIntrospectionConfigurationTests
         await using var server = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment(environment);
+            builder.UseSetting("Relay:Enabled", "true");
             builder.UseSetting("Authentication:Schemes:Bearer:Authority", "https://idp.example");
             builder.UseSetting("Authentication:Schemes:Bearer:ValidAudiences:0", "novalist");
             builder.UseSetting("Relay:Introspection:Endpoint", endpoint);
