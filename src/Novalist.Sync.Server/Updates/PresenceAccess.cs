@@ -9,13 +9,19 @@ public sealed class PresenceAccess(SyncDbContext db, DeviceRegistry devices, Pro
 {
     public const int MaximumRecipients = 256;
 
+    public async Task<EnvelopeHeader> PreflightAsync(Guid userId, Guid deviceId, Envelope envelope, CancellationToken ct)
+    {
+        var header = ValidateEnvelope(deviceId, envelope);
+        await devices.EnsureActiveAsync(userId, deviceId, ct);
+        await projects.EnsureCanReadAsync(userId, header.ProjectId, ct);
+        return header;
+    }
+
     public async Task DeliverAsync(Guid userId, Guid deviceId, Envelope envelope, IReadOnlySet<Guid> joinedDevices,
         Func<Guid, IReadOnlySet<Guid>, CancellationToken, Task> deliver, CancellationToken ct)
     {
-        var header = ValidateEnvelope(deviceId, envelope);
+        var header = await PreflightAsync(userId, deviceId, envelope, ct);
         if (joinedDevices.Count > MaximumRecipients) throw new PushRejectedException("Presence has too many receiving devices.");
-        await devices.EnsureActiveAsync(userId, deviceId, ct);
-        await projects.EnsureCanReadAsync(userId, header.ProjectId, ct);
 
         await using var projectDelivery = await deliveryGate.ProjectAsync(header.ProjectId, ct);
         var candidates = joinedDevices.Append(deviceId).Distinct().ToArray();
@@ -29,8 +35,7 @@ public sealed class PresenceAccess(SyncDbContext db, DeviceRegistry devices, Pro
             .Select(project => (long?)project.CurrentEpoch).SingleOrDefaultAsync(ct);
         if (epoch != header.Epoch)
             throw new PushRejectedException("The presence epoch is no longer current.");
-        var recipients = await db.Devices.Where(device => candidates.Contains(device.Id) && accounts.Contains(device.UserId) && device.RevokedAt == null &&
-            (device.SigningPublicKey != null || !db.Devices.Any(other => other.UserId == device.UserId && other.SigningPublicKey != null)))
+        var recipients = await DeviceRegistry.ActiveDevices(db).Where(device => candidates.Contains(device.Id) && accounts.Contains(device.UserId))
             .Select(device => device.Id).ToListAsync(ct);
         if (!recipients.Contains(deviceId))
             throw new AccessDeniedException("The sending device is no longer active.");

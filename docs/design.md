@@ -732,8 +732,10 @@ server time, not additional user or project data. Expired requests
 cannot acquire a lease. `field_lease_attempts` retains project/device/lease UUIDs
 only until that deadline, including denied attempts and releases received before
 acquisition, so delayed requests cannot resurrect an earlier focus after cleanup.
-This fences retries of the original request. Changing the acquisition deadline
-creates a new attempt; the server does not keep permanent lease-UUID history.
+This fences retries of the original request. A new attempt must use a fresh
+lease UUID and deadline. Changing the deadline alone cannot bypass a retained
+attempt. After retention expires, the original deadline still rejects an old
+request; the server does not keep permanent lease-UUID history.
 Renewal, editing, and release of an existing lease do not require an acquisition
 deadline. Cancellation received before acquisition must supply the original
 deadline so the server can retain its replay barrier until that time.

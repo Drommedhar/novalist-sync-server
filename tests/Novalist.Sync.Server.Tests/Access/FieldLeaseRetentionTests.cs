@@ -20,7 +20,7 @@ public sealed class FieldLeaseRetentionTests(DatabaseFixture database)
         var leases = new FieldLeaseAccess(db, new(db, database.DeliveryGate), new(db));
         var original = new FieldLeaseRequest(project, Guid.NewGuid(), 0, Guid.NewGuid(), clock.Now.AddMinutes(1));
         await leases.AcquireAsync(user.Id, device, original, ct);
-        await leases.ReleaseAsync(user.Id, device, original, ct);
+        Assert.True(await leases.ReleaseAsync(user.Id, device, original, ct));
         clock.Now = clock.Now.AddMinutes(2);
         await new EphemeralStateCleanup(db).PruneAsync(ct);
         Assert.Empty(await db.FieldLeaseAttempts.Where(value => value.ProjectId == project).ToListAsync(ct));

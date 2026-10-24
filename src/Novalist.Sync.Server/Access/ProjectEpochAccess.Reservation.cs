@@ -36,8 +36,7 @@ public sealed partial class ProjectEpochAccess
         await using var transaction = await AccountAccessLock.AcquireAsync(db, user, legacyAccount: false, ct, shared: true);
         await LockProjectAsync(project.Value, ct);
         await projects.EnsureIsOwnerAsync(user, project.Value, ct);
-        if (!await db.Devices.AnyAsync(value => value.Id == device && value.UserId == user && value.RevokedAt == null &&
-            (value.SigningPublicKey != null || !db.Devices.Any(other => other.UserId == user && other.SigningPublicKey != null)), ct))
+        if (!await DeviceRegistry.ActiveDevices(db).AnyAsync(value => value.Id == device && value.UserId == user, ct))
             throw new AccessDeniedException("The cancelling device is unavailable.");
         await db.ProjectEpochStages.Where(stage => stage.Id == rotation).ExecuteDeleteAsync(ct);
         await transaction.CommitAsync(ct);

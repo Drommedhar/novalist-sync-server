@@ -145,7 +145,7 @@ public sealed partial class SyncHub(
     public async Task PublishPresence(Envelope envelope)
     {
         await EnsureDeviceActiveAsync(Context.ConnectionAborted);
-        var project = EnvelopeHeader.Parse(envelope.Header).ProjectId;
+        var project = (await presence.PreflightAsync(UserId, DeviceId, envelope, Context.ConnectionAborted)).ProjectId;
         var targets = connections.PresenceTargets(project, Context.ConnectionId, PresenceAccess.MaximumRecipients + 1);
         if (targets.Count > PresenceAccess.MaximumRecipients)
             throw new PushRejectedException("Presence is limited to 256 active recipients per message.");

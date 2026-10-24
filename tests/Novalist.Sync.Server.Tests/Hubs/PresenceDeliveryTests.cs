@@ -12,6 +12,33 @@ namespace Novalist.Sync.Server.Tests.Hubs;
 
 public sealed class PresenceDeliveryTests(DatabaseFixture database)
 {
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task MembershipAndEnvelopeFailuresDoNotRevealThePresenceCapacity(bool member, bool validEnvelope)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var server = new SyncServer(database);
+        var owner = await database.CreateUserAsync();
+        var sender = member ? owner : await database.CreateUserAsync();
+        var device = await database.CreateDeviceAsync(sender.Id);
+        var project = await database.CreateProjectAsync((owner.Id, MembershipRole.Owner));
+        await using var hub = server.CreateHubConnection(TestTokens.Create(sender.Subject), device);
+        await hub.StartAsync(ct);
+        var registry = server.Services.GetRequiredService<ConnectionRegistry>();
+        for (var index = 0; index <= PresenceAccess.MaximumRecipients; index++)
+        {
+            var recipient = new FakeHubCallerContext();
+            registry.Add(recipient, owner.Id, device);
+            registry.JoinProject(recipient.ConnectionId, project);
+        }
+        var envelope = TestData.Envelope(project, device, 1, MsgType.Presence);
+        if (!validEnvelope) envelope = envelope with { Nonce = new byte[23] };
+        var error = await Assert.ThrowsAsync<HubException>(() => hub.InvokeAsync("PublishPresence", envelope, ct));
+        Assert.Contains(member ? "Invalid presence envelope" : "not a member", error.Message);
+        Assert.DoesNotContain("256", error.Message);
+    }
+
     [Fact]
     public async Task PresenceCountsEveryConnectionAgainstItsFanoutLimitEvenForTheSameDevice()
     {

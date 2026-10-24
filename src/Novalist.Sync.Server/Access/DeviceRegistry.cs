@@ -37,10 +37,7 @@ public sealed partial class DeviceRegistry(SyncDbContext db, AccessDeliveryGate 
 
     public async Task EnsureActiveAsync(Guid userId, Guid deviceId, CancellationToken cancellationToken)
     {
-        var active = await db.Devices.AnyAsync(
-            d => d.Id == deviceId && d.UserId == userId && d.RevokedAt == null &&
-                (d.SigningPublicKey != null || !db.Devices.Any(other => other.UserId == userId && other.SigningPublicKey != null)),
-            cancellationToken);
+        var active = await ActiveDevices(db).AnyAsync(d => d.Id == deviceId && d.UserId == userId, cancellationToken);
 
         if (!active)
         {
