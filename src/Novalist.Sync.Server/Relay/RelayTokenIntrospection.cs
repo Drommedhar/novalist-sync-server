@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Buffers;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -48,16 +49,22 @@ internal sealed class RelayTokenIntrospection : IDisposable
         request.Headers.Authorization = new("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(credentials)));
         request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
         {
-            ["token"] = token, ["token_type_hint"] = "access_token"
+            ["token"] = token,
+            ["token_type_hint"] = "access_token"
         });
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         if (!response.IsSuccessStatusCode || response.Content.Headers.ContentLength > options.MaxResponseBytes)
             return RelayTokenState.Unavailable;
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
-        var bytes = new byte[options.MaxResponseBytes + 1];
-        var count = await stream.ReadAtLeastAsync(bytes, bytes.Length, false, ct);
-        return count > options.MaxResponseBytes ? RelayTokenState.Unavailable
-            : RelayIntrospectionResponse.Read(bytes.AsMemory(0, count), identity, clock.GetUtcNow());
+        var limit = options.MaxResponseBytes + 1;
+        var bytes = ArrayPool<byte>.Shared.Rent(limit);
+        try
+        {
+            var count = await stream.ReadAtLeastAsync(bytes.AsMemory(0, limit), limit, false, ct);
+            return count > options.MaxResponseBytes ? RelayTokenState.Unavailable
+                : RelayIntrospectionResponse.Read(bytes.AsMemory(0, count), identity, clock.GetUtcNow());
+        }
+        finally { ArrayPool<byte>.Shared.Return(bytes, clearArray: true); }
     }
 
     public void Dispose() => requests.Dispose();

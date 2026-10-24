@@ -78,6 +78,21 @@ internal sealed class RelayTestServer : WebApplicationFactory<Program>
     public Task ConnectAsync(ClientWebSocket socket, string path) =>
         socket.ConnectAsync(new UriBuilder(new Uri(Address, "/relay/v1/" + path)) { Scheme = "ws" }.Uri, Token);
 
+    public async Task<ClientWebSocket> ConnectAfterCleanupAsync(string path, string subject)
+    {
+        while (true)
+        {
+            var socket = Socket(subject);
+            try { await ConnectAsync(socket, path); return socket; }
+            catch (WebSocketException) when (socket.HttpStatusCode == HttpStatusCode.ServiceUnavailable)
+            {
+                socket.Dispose();
+                await Task.Delay(TimeSpan.FromMilliseconds(50), Token);
+            }
+            catch { socket.Dispose(); throw; }
+        }
+    }
+
     public async Task<Guid> ReadIdAsync(ClientWebSocket socket)
     {
         var bytes = new byte[64];
@@ -96,7 +111,12 @@ internal sealed class RelayTestServer : WebApplicationFactory<Program>
 
     public async Task ClosedAsync(ClientWebSocket socket)
     {
-        try { Assert.Equal(WebSocketMessageType.Close, (await socket.ReceiveAsync(new byte[1].AsMemory(), Token)).MessageType); }
+        try
+        {
+            Assert.Equal(WebSocketMessageType.Close, (await socket.ReceiveAsync(new byte[1].AsMemory(), Token)).MessageType);
+            if (socket.State == WebSocketState.CloseReceived)
+                await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "acknowledged", Token);
+        }
         catch (WebSocketException) { Assert.Equal(WebSocketState.Aborted, socket.State); }
     }
 

@@ -14,30 +14,27 @@ public static partial class RelayEndpoints
         var owner = RelayIdentity.From(context);
         if (!quotas.TryReserve(true, out var reservation, out var status, owner)) { Reject(context, status); return; }
         using var reserved = reservation;
-        using var socket = await context.WebSockets.AcceptWebSocketAsync();
+        using var socket = await AcceptSocketAsync(context);
+        if (socket is null) return;
         var session = sessions.Create(owner, proof);
         await using var lifetime = new RelayLifetime(context, session.Stop.Token);
         try
         {
             await SendIdAsync(socket, session.Id, lifetime.Token);
-            var send = SendRequestsAsync(socket, session, lifetime.Token);
-            var receive = socket.ReceiveAsync(new byte[1], lifetime.Token);
-            await Task.WhenAny(send, receive);
-            await lifetime.CancelAsync();
-            await Task.WhenAll(send, receive);
+            await RunHostControlAsync(context, socket, session, lifetime);
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch (WebSocketException error) { ReportDisconnect(context, error); }
         finally
         {
             sessions.Remove(session);
-            socket.Abort();
+            if (socket.State != WebSocketState.Closed) socket.Abort();
         }
     }
 
-    private static async Task SendRequestsAsync(WebSocket socket, RelaySession session, CancellationToken ct)
+    private static async Task SendRequestsAsync(WebSocket socket, RelaySession session, CancellationToken waiting, CancellationToken sending)
     {
-        await foreach (var id in session.Requests.Reader.ReadAllAsync(ct)) await SendIdAsync(socket, id, ct);
+        await foreach (var id in session.Requests.Reader.ReadAllAsync(waiting)) await SendIdAsync(socket, id, sending);
     }
 
     private static Task SendIdAsync(WebSocket socket, Guid id, CancellationToken ct) =>

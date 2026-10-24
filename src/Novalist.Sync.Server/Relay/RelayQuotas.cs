@@ -22,17 +22,26 @@ internal sealed class RelayQuotas
 
     internal int EntryCount { get { lock (gate) return entries.Count; } }
 
-    public bool Request(RelayIdentity identity, bool accountOnly)
+    public int Request(RelayIdentity identity, bool accountOnly)
     {
         lock (gate)
         {
             var now = clock.GetUtcNow();
             var keys = identity.Keys().Where(key => key.Account == accountOnly).ToArray();
             var quotas = Resolve(keys, now);
-            if (quotas is null || (!accountOnly && requests.Available(now) < 1) || quotas.Any(q => q.Requests.Available(now) < 1))
-                return false;
-            if (!accountOnly) requests.Consume(1);
+            if (quotas is null) return 503;
+            if (quotas.Any(q => q.Requests.Available(now) < 1)) return 429;
             foreach (var quota in quotas) quota.Requests.Consume(1);
+            return 0;
+        }
+    }
+
+    public bool RequestUpgrade()
+    {
+        lock (gate)
+        {
+            if (requests.Available(clock.GetUtcNow()) < 1) return false;
+            requests.Consume(1);
             return true;
         }
     }

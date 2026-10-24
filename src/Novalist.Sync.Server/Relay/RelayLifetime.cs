@@ -6,21 +6,20 @@ namespace Novalist.Sync.Server.Relay;
 internal sealed class RelayLifetime : IAsyncDisposable
 {
     private readonly CancellationTokenSource stop;
-    private readonly CancellationTokenSource? expiry;
+    private readonly Task expiry;
     private readonly Task monitor;
+    private int authorizationEnded;
     public CancellationToken Token => stop.Token;
     public bool IsCancellationRequested => stop.IsCancellationRequested;
+    public bool AuthorizationEnded => Volatile.Read(ref authorizationEnded) != 0;
 
     public RelayLifetime(HttpContext context, CancellationToken session = default, CancellationToken route = default)
     {
-        if (RelayAuthentication.Required(context))
-        {
-            var clock = context.RequestServices.GetRequiredService<TimeProvider>();
-            var remaining = ExpiresAt(context) - clock.GetUtcNow();
-            expiry = new(TimeSpan.FromMilliseconds(Math.Clamp(remaining.TotalMilliseconds, 0, uint.MaxValue - 1)), clock);
-        }
-        stop = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, session, route, expiry?.Token ?? default);
-        monitor = expiry is null ? Task.CompletedTask : MonitorAsync(context);
+        var shutdown = context.RequestServices.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping;
+        stop = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, session, route, shutdown);
+        var authenticated = RelayAuthentication.Required(context);
+        expiry = authenticated ? ExpireAsync(context) : Task.CompletedTask;
+        monitor = authenticated ? MonitorAsync(context) : Task.CompletedTask;
     }
 
     public static DateTimeOffset ExpiresAt(HttpContext context) =>
@@ -28,6 +27,22 @@ internal sealed class RelayLifetime : IAsyncDisposable
         seconds is >= 0 and <= 253402300799 ? DateTimeOffset.FromUnixTimeSeconds(seconds) : DateTimeOffset.MinValue;
 
     public Task CancelAsync() => stop.CancelAsync();
+
+    private async Task ExpireAsync(HttpContext context)
+    {
+        try
+        {
+            await RelayTokenExpiry.WaitAsync(ExpiresAt(context), context.RequestServices.GetRequiredService<TimeProvider>(), stop.Token);
+            await EndAuthorizationAsync();
+        }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+    }
+
+    private Task EndAuthorizationAsync()
+    {
+        Volatile.Write(ref authorizationEnded, 1);
+        return stop.CancelAsync();
+    }
 
     private async Task MonitorAsync(HttpContext context)
     {
@@ -40,7 +55,7 @@ internal sealed class RelayLifetime : IAsyncDisposable
             {
                 await Task.Delay(TimeSpan.FromSeconds(interval), clock, stop.Token);
                 if (await service.CheckAsync(context, stop.Token) == RelayTokenState.Active) continue;
-                await stop.CancelAsync();
+                await EndAuthorizationAsync();
                 return;
             }
         }
@@ -51,8 +66,7 @@ internal sealed class RelayLifetime : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await stop.CancelAsync();
-        await monitor;
+        await Task.WhenAll(expiry, monitor);
         stop.Dispose();
-        expiry?.Dispose();
     }
 }

@@ -25,7 +25,7 @@ public sealed class RelayIntrospectionTests
     public async Task DisabledHostAccountClosesTheSessionAndAllRoutes()
     {
         var active = 1;
-        await using var server = new RelayTestServer(introspection: options => options.CheckIntervalSeconds = 0.05,
+        await using var server = new RelayTestServer(introspection: options => options.CheckIntervalSeconds = 5,
             response: (_, _) => Task.FromResult(Response(Volatile.Read(ref active) == 1 ? "{\"active\":true}" : "{\"active\":false}")));
         using var control = server.Socket();
         await server.ConnectAsync(control, "host");
@@ -38,6 +38,8 @@ public sealed class RelayIntrospectionTests
         await joining;
         Interlocked.Exchange(ref active, 0);
         await server.ClosedAsync(control);
+        Assert.Equal(System.Net.WebSockets.WebSocketCloseStatus.PolicyViolation, control.CloseStatus);
+        Assert.Equal("Relay authorization ended.", control.CloseStatusDescription);
         await server.ClosedAsync(guest);
         await server.ClosedAsync(host);
         await server.RejectedAsync("host", HttpStatusCode.Unauthorized);
@@ -47,7 +49,7 @@ public sealed class RelayIntrospectionTests
     public async Task DisabledGuestLosesOnlyItsRoute()
     {
         var disabled = 0;
-        await using var server = new RelayTestServer(introspection: options => options.CheckIntervalSeconds = 0.05,
+        await using var server = new RelayTestServer(introspection: options => options.CheckIntervalSeconds = 5,
             response: async (request, ct) =>
             {
                 var token = QueryHelpers.ParseQuery(await request.Content!.ReadAsStringAsync(ct))["token"].ToString();
@@ -81,8 +83,8 @@ public sealed class RelayIntrospectionTests
         var unavailable = 0;
         await using var server = new RelayTestServer(introspection: options =>
         {
-            options.CheckIntervalSeconds = 0.05;
-            options.TimeoutSeconds = 0.05;
+            options.CheckIntervalSeconds = 5;
+            options.TimeoutSeconds = 1;
         }, response: async (_, ct) =>
         {
             if (Volatile.Read(ref unavailable) == 1) await Task.Delay(Timeout.InfiniteTimeSpan, ct);

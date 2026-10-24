@@ -26,7 +26,8 @@ public static partial class RelayEndpoints
         {
             var host = await route.Host.Task.WaitAsync(deadline.Token);
             deadline.CancelAfter(Timeout.InfiniteTimeSpan);
-            using var guest = await context.WebSockets.AcceptWebSocketAsync();
+            using var guest = await AcceptSocketAsync(context);
+            if (guest is null) return;
             await RelayPackets.TransferAsync(guest, host, lifetime.Token, reservation.ThrottleAsync);
         }
         catch (OperationCanceledException) when (deadline.IsCancellationRequested || route.Done.Task.IsCompleted)

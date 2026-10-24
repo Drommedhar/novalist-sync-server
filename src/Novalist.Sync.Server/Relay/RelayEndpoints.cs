@@ -23,9 +23,9 @@ public static partial class RelayEndpoints
         if (RelayAuthentication.Required(context) &&
             RelayLifetime.ExpiresAt(context) <= context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow())
         { context.Response.StatusCode = 401; return false; }
-        if (!context.RequestServices.GetRequiredService<RelayQuotas>().Request(RelayIdentity.From(context), true))
-        { context.Response.StatusCode = 429; context.Response.Headers.RetryAfter = "60"; return false; }
         if (!context.WebSockets.IsWebSocketRequest) { context.Response.StatusCode = 400; return false; }
+        var status = context.RequestServices.GetRequiredService<RelayQuotas>().Request(RelayIdentity.From(context), true);
+        if (Reject(context, status)) return false;
         if (!RelayAuthentication.Required(context)) return true;
         var state = await context.RequestServices.GetRequiredService<RelayTokenIntrospection>().CheckAsync(context, context.RequestAborted);
         if (state == RelayTokenState.Active &&
@@ -38,8 +38,14 @@ public static partial class RelayEndpoints
     {
         if (status == 0) return false;
         context.Response.StatusCode = status;
-        if (status == 429 || status == 503) context.Response.Headers.RetryAfter = "1";
         return true;
+    }
+
+    private static async Task<WebSocket?> AcceptSocketAsync(HttpContext context)
+    {
+        if (!context.RequestServices.GetRequiredService<RelayQuotas>().RequestUpgrade())
+        { context.Response.StatusCode = 429; return null; }
+        return await context.WebSockets.AcceptWebSocketAsync();
     }
 
     private static void ReportDisconnect(HttpContext context, WebSocketException error) =>

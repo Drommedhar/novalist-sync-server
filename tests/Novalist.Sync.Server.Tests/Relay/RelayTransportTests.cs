@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
+using System.Collections.Concurrent;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Novalist.Sync.Server.Relay;
@@ -9,6 +10,36 @@ namespace Novalist.Sync.Server.Tests.Relay;
 
 public sealed class RelayTransportTests
 {
+    [Fact]
+    public async Task RelayChargesEachBinaryPacketToTheThrottleInBothDirections()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var guest = await SocketPairAsync(ct);
+        var host = await SocketPairAsync(ct);
+        using var guestClient = guest.Client;
+        using var guestRelay = guest.Relay;
+        using var hostClient = host.Client;
+        using var hostRelay = host.Relay;
+        var charged = new ConcurrentQueue<int>();
+        var transfer = RelayPackets.TransferAsync(guestRelay, hostRelay, ct, (count, token) =>
+        {
+            Assert.True(token.CanBeCanceled);
+            charged.Enqueue(count);
+            return Task.CompletedTask;
+        });
+        var buffer = new byte[16];
+        await guestClient.SendAsync(new byte[] { 1, 2, 3, 4 }.AsMemory(), WebSocketMessageType.Binary, true, ct);
+        Assert.Equal(4, (await hostClient.ReceiveAsync(buffer.AsMemory(), ct)).Count);
+        await hostClient.SendAsync(new byte[] { 5, 6, 7 }.AsMemory(), WebSocketMessageType.Binary, true, ct);
+        Assert.Equal(3, (await guestClient.ReceiveAsync(buffer.AsMemory(), ct)).Count);
+        await guestClient.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "finished", ct);
+        Assert.Equal(WebSocketMessageType.Close, (await hostClient.ReceiveAsync(buffer.AsMemory(), ct)).MessageType);
+        await hostClient.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "acknowledged", ct);
+        Assert.Equal(WebSocketMessageType.Close, (await guestClient.ReceiveAsync(buffer.AsMemory(), ct)).MessageType);
+        await transfer.WaitAsync(TimeSpan.FromSeconds(5), ct);
+        Assert.Equal(new[] { 4, 3 }, charged.ToArray());
+    }
+
     [Theory]
     [InlineData("Production", "http", "203.0.113.1", false, 400)]
     [InlineData("Production", "https", "203.0.113.1", false, 401)]

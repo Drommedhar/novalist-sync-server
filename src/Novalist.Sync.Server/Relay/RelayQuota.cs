@@ -17,7 +17,8 @@ internal sealed class RelayBucket(DateTimeOffset now, double capacity, double ra
 
     public double Available(DateTimeOffset current, double? refillRate = null)
     {
-        available = Math.Min(maximum, available + Math.Max(0, (current - updated).TotalSeconds) * (refillRate ?? rate));
+        if (current <= updated) return available;
+        available = Math.Min(maximum, available + (current - updated).TotalSeconds * (refillRate ?? rate));
         updated = current;
         return available;
     }

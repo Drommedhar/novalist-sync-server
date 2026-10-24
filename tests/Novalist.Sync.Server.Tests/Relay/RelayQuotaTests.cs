@@ -23,7 +23,13 @@ public sealed class RelayQuotaTests
         Assert.False(quotas.TryReserve(true, out _, out var ipLimit, identity with { Subject = "another" }));
         Assert.Equal(429, ipLimit);
         foreach (var reservation in accepted) { reservation.Dispose(); reservation.Dispose(); }
-        using var next = Reserve(quotas, true, identity);
+        var refilled = Enumerable.Range(0, 4).Select(_ => Reserve(quotas, true, identity)).ToArray();
+        try
+        {
+            Assert.False(quotas.TryReserve(true, out _, out var exhausted, identity));
+            Assert.Equal(429, exhausted);
+        }
+        finally { foreach (var reservation in refilled) reservation.Dispose(); }
     }
 
     [Fact]
@@ -33,11 +39,11 @@ public sealed class RelayQuotaTests
         var quotas = new RelayQuotas(Options.Create(new RelayOptions { MaxQuotaEntries = 2 }), clock);
         var first = new RelayIdentity("192.0.2.1", "", "");
         using var active = Reserve(quotas, true, first);
-        Assert.True(quotas.Request(first with { Address = "192.0.2.2" }, false));
-        Assert.False(quotas.Request(first with { Address = "192.0.2.3" }, false));
+        Assert.Equal(0, quotas.Request(first with { Address = "192.0.2.2" }, false));
+        Assert.Equal(503, quotas.Request(first with { Address = "192.0.2.3" }, false));
         Assert.Equal(2, quotas.EntryCount);
         clock.Advance(TimeSpan.FromMinutes(1));
-        Assert.True(quotas.Request(first with { Address = "192.0.2.3" }, false));
+        Assert.Equal(0, quotas.Request(first with { Address = "192.0.2.3" }, false));
         Assert.Equal(2, quotas.EntryCount);
     }
 
@@ -47,11 +53,30 @@ public sealed class RelayQuotaTests
         var clock = new QuotaClock();
         var quotas = new RelayQuotas(Options.Create(new RelayOptions { RequestsPerMinutePerAccount = 1 }), clock);
         var identity = new RelayIdentity("192.0.2.1", "issuer", "account");
-        Assert.True(quotas.Request(identity, true));
-        Assert.False(quotas.Request(identity with { Address = "192.0.2.2" }, true));
-        Assert.True(quotas.Request(identity with { Subject = "another" }, true));
+        Assert.Equal(0, quotas.Request(identity, true));
+        Assert.Equal(429, quotas.Request(identity with { Address = "192.0.2.2" }, true));
+        Assert.Equal(0, quotas.Request(identity with { Subject = "another" }, true));
         clock.Advance(TimeSpan.FromMinutes(1));
-        Assert.True(quotas.Request(identity, true));
+        Assert.Equal(0, quotas.Request(identity, true));
+    }
+
+    [Fact]
+    public void ClockRollbackCannotRefillTheSameIntervalTwice()
+    {
+        var clock = new QuotaClock();
+        var quotas = new RelayQuotas(Options.Create(new RelayOptions { RequestsPerMinutePerAccount = 1 }), clock);
+        var identity = new RelayIdentity("192.0.2.1", "issuer", "account");
+        Assert.Equal(0, quotas.Request(identity, true));
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(0, quotas.Request(identity, true));
+        clock.Advance(TimeSpan.FromSeconds(-30));
+        Assert.Equal(429, quotas.Request(identity, true));
+        clock.Advance(TimeSpan.FromSeconds(30));
+        Assert.Equal(429, quotas.Request(identity, true));
+        clock.Advance(TimeSpan.FromSeconds(30));
+        Assert.Equal(429, quotas.Request(identity, true));
+        clock.Advance(TimeSpan.FromSeconds(30));
+        Assert.Equal(0, quotas.Request(identity, true));
     }
 
     [Fact]

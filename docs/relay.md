@@ -64,6 +64,11 @@ counted after the host reads their identifiers, and active routes remain counted
 until they close. There is no project-sized buffering. Closing the control
 socket removes its session and closes all routes. A new host receives a new ID;
 closed session IDs and prior packet data cannot be resumed from this server.
+When the control socket is writable, shutdown sends a WebSocket close frame and
+allows one second for acknowledgement. Authorization expiry or revocation uses
+status 1008 (`PolicyViolation`); a server shutdown uses 1001 (`EndpointUnavailable`),
+and a normal host disconnect uses 1000 (`NormalClosure`). Broken or unresponsive
+sockets are aborted after that bounded attempt.
 
 ## Resource limits
 
@@ -90,24 +95,34 @@ invalid limits prevent startup. Byte limits must allow at least one 16 KiB packe
 | `MaxRoutesPerAccount` | 32 | Routes per participating issuer/subject |
 | `MaxRoutesPerSession` | 16 | Pending and active routes for one host |
 | `MaxPendingRoutesPerSession` | 4 | Unattached routes for one host |
-| `RequestsPerMinute` | 1024 | Connection attempts across the instance |
+| `RequestsPerMinute` | 1024 | Accepted WebSocket upgrade attempts across the instance |
 | `RequestsPerMinutePerIp` | 60 | Connection attempts per IP, including rejected authentication |
-| `RequestsPerMinutePerAccount` | 60 | Connection attempts per authenticated issuer/subject |
+| `RequestsPerMinutePerAccount` | 60 | WebSocket connection attempts per authenticated issuer/subject |
 | `BytesPerSecond` | 8388608 | Sustained bytes per second per IP and account |
 | `BurstBytes` | 16777216 | Initial and maximum byte allowance per IP and account |
 | `MaxQuotaEntries` | 4096 | Maximum tracked IP/account quota entries |
 | `RouteTimeoutSeconds` | 15 | Time allowed for the host to attach |
 
+Only the IP request allowance is charged before authentication. Ordinary HTTP
+requests do not charge the account or global allowance. The global allowance is
+charged just before an authorized upgrade, after endpoint-specific access and
+capacity checks; rejected authentication, missing routes and incorrect host
+capabilities cannot consume it. The same rule applies to valid anonymous
+upgrades when anonymous mode is enabled.
+
 Request allowances refill continuously over one minute. Quota entries without
 live sessions or routes can be discarded after a minute of inactivity when the
 table reaches capacity; arbitrary addresses or accounts cannot grow it without
 bound. IP addresses come from the socket or the explicitly trusted proxy described
-above. Anonymous callers share the limits of their IP, including callers behind
+above. IPv4 quotas use one address (including IPv4-mapped addresses); IPv6 quotas
+use the /64 prefix so rotating interface addresses cannot evade limits.
+Anonymous callers share those address/prefix limits, including callers behind
 the same NAT.
 
 The HTTP response is 429 for request or per-account/IP capacity limits and 503
-for instance/session capacity limits. These responses include `Retry-After`;
-they do not create an accepted route or consume a live permit. A missing session
+for instance/session capacity limits, including a full quota table. These
+responses omit `Retry-After` because capacity release time is unknown; they do
+not create an accepted route or consume a live permit. A missing session
 or route returns 404, an incorrect host identity/capability returns 403, and an
 unattached route that times out or loses its host returns 410. Requests without
 required authentication return 401. Limits are enforced before new requests
@@ -163,8 +178,8 @@ connection independently of that polling interval.
 
 | Setting under `Relay:Introspection` | Default | Bound |
 | --- | ---: | --- |
-| `CheckIntervalSeconds` | 30 | Up to 30 seconds between checks |
-| `TimeoutSeconds` | 5 | Up to 5 seconds for a check |
+| `CheckIntervalSeconds` | 30 | 5–30 seconds between checks |
+| `TimeoutSeconds` | 5 | 1–5 seconds for a check |
 | `MaxConcurrentRequests` | 16 | Maximum simultaneous provider requests |
 | `MaxResponseBytes` | 16384 | Maximum response-body bytes |
 

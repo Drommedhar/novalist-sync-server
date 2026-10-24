@@ -16,7 +16,8 @@ public static partial class RelayEndpoints
         try
         {
             if (Reject(context, quotas.ExtendRoute(route.Reservation, RelayIdentity.From(context)))) return;
-            using var socket = await context.WebSockets.AcceptWebSocketAsync();
+            using var socket = await AcceptSocketAsync(context);
+            if (socket is null) return;
             try { if (route.Attach(socket)) await route.Done.Task.WaitAsync(lifetime.Token); }
             finally { route.Complete(); socket.Abort(); }
         }

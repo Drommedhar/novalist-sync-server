@@ -5,6 +5,24 @@ namespace Novalist.Sync.Server.Tests.Relay;
 
 public sealed class RelaySessionTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task HostControlSendsACloseFrameForNormalShutdownAndExpiredAuthorization(bool expired)
+    {
+        await using var server = new RelayTestServer();
+        using var control = server.Socket(expires: expired ? DateTime.UtcNow.AddSeconds(3) : null);
+        await server.ConnectAsync(control, "host");
+        await server.ReadIdAsync(control);
+        if (!expired) await control.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "finished", server.Token);
+        var message = await control.ReceiveAsync(new byte[1].AsMemory(), server.Token);
+        Assert.Equal(WebSocketMessageType.Close, message.MessageType);
+        Assert.Equal(expired ? WebSocketCloseStatus.PolicyViolation : WebSocketCloseStatus.NormalClosure, control.CloseStatus);
+        Assert.Equal(expired ? "Relay authorization ended." : "Relay session closed.", control.CloseStatusDescription);
+        if (control.State == WebSocketState.CloseReceived)
+            await control.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "acknowledged", server.Token);
+    }
+
     [Fact]
     public async Task AuthenticatedEndpointsRejectMissingTokensAndUnknownSessions()
     {
@@ -86,12 +104,11 @@ public sealed class RelaySessionTests
         await server.RejectedAsync($"sessions/{session}/guest", HttpStatusCode.ServiceUnavailable, "other");
         guest.Abort();
         await server.ClosedAsync(host);
-        using var next = server.Socket("next");
-        var nextJoin = server.ConnectAsync(next, $"sessions/{session}/guest");
+        var nextJoin = server.ConnectAfterCleanupAsync($"sessions/{session}/guest", "next");
         var nextRoute = await server.ReadIdAsync(control);
         using var nextHost = server.Socket();
         await server.ConnectAsync(nextHost, $"sessions/{session}/routes/{nextRoute}");
-        await nextJoin;
+        using var next = await nextJoin;
     }
 
     [Theory]

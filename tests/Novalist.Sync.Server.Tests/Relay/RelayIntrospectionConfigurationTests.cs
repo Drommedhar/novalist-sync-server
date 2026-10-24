@@ -7,6 +7,26 @@ namespace Novalist.Sync.Server.Tests.Relay;
 public sealed class RelayIntrospectionConfigurationTests
 {
     [Theory]
+    [InlineData("CheckIntervalSeconds", "0.01")]
+    [InlineData("CheckIntervalSeconds", "4")]
+    [InlineData("CheckIntervalSeconds", "4.99")]
+    [InlineData("TimeoutSeconds", "0.01")]
+    [InlineData("TimeoutSeconds", "0.5")]
+    [InlineData("TimeoutSeconds", "0.99")]
+    public async Task ImpracticallyShortIntrospectionTimersPreventStartup(string setting, string value)
+    {
+        await using var server = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Development");
+            builder.UseSetting("Relay:Introspection:Endpoint", "https://idp.test/introspect");
+            builder.UseSetting("Relay:Introspection:ClientId", "relay-test");
+            builder.UseSetting("Relay:Introspection:ClientSecret", "relay-test-secret");
+            builder.UseSetting("Relay:Introspection:" + setting, value);
+        });
+        Assert.Contains(setting, Assert.Throws<OptionsValidationException>(() => server.CreateClient()).Message);
+    }
+
+    [Theory]
     [InlineData("Endpoint")]
     [InlineData("ClientId")]
     [InlineData("ClientSecret")]
