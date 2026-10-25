@@ -48,12 +48,14 @@ public sealed class RelayIntrospectionLimitsTests
     public async Task ProviderRedirectsAndOversizedStreamingResponsesFailClosed(bool oversized)
     {
         var redirected = 0;
+        var requests = 0;
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Logging.ClearProviders();
         await using var provider = builder.Build();
         provider.MapPost("/introspect", async context =>
         {
+            Interlocked.Increment(ref requests);
             if (oversized) await context.Response.WriteAsync(new string(' ', 256) + "{\"active\":true}", context.RequestAborted);
             else context.Response.Redirect("/redirected", false, true);
         });
@@ -69,6 +71,7 @@ public sealed class RelayIntrospectionLimitsTests
             options.MaxResponseBytes = 128;
         });
         await server.RejectedAsync("host", HttpStatusCode.ServiceUnavailable);
+        Assert.Equal(1, Volatile.Read(ref requests));
         Assert.Equal(0, Volatile.Read(ref redirected));
     }
 }

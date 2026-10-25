@@ -15,7 +15,7 @@ public sealed class RelayRenewalTests
     {
         var clock = new RelayTestClock();
         await using var server = new RelayTestServer(clock: clock, introspection: options => options.GracePeriodSeconds = 0);
-        var expiry = DateTime.UtcNow.AddSeconds(10);
+        var expiry = clock.GetUtcNow().UtcDateTime.AddSeconds(10);
         using var control = server.Socket(expires: expiring == "control" ? expiry : null);
         await server.ConnectAsync(control, "host");
         var session = await server.ReadIdAsync(control);
@@ -33,6 +33,7 @@ public sealed class RelayRenewalTests
         using var renewed = await http.PostAsync($"/relay/v1/connections/{connection}/token", null, server.Token);
         Assert.Equal(HttpStatusCode.NoContent, renewed.StatusCode);
         clock.Advance(TimeSpan.FromSeconds(11));
+        Assert.True(clock.GetUtcNow().UtcDateTime > expiry);
         await guest.SendAsync(new byte[] { 42 }.AsMemory(), WebSocketMessageType.Binary, true, server.Token);
         var bytes = new byte[1];
         await host.ReceiveAsync(bytes.AsMemory(), server.Token);

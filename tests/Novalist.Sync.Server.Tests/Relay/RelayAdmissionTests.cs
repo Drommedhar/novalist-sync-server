@@ -9,10 +9,25 @@ namespace Novalist.Sync.Server.Tests.Relay;
 
 public sealed class RelayAdmissionTests
 {
+    [Fact]
+    public void AuthenticatedRelayRequiresRoomForBothAddressAndAccountQuotas()
+    {
+        using var server = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Development");
+            builder.UseSetting("Relay:Enabled", "true");
+            builder.UseSetting("Relay:MaxQuotaEntries", "1");
+            builder.UseSetting("Relay:Introspection:Endpoint", "https://idp.test/introspect");
+            builder.UseSetting("Relay:Introspection:ClientId", "test");
+            builder.UseSetting("Relay:Introspection:ClientSecret", "test");
+        });
+        Assert.Contains("two quota entries", Assert.Throws<OptionsValidationException>(() => server.CreateClient()).Message);
+    }
+
     [Theory]
     [InlineData("1")]
     [InlineData("2")]
-    public async Task GlobalUpgradeAllowanceMustAdmitControlAndBothRouteSides(string allowance)
+    public async Task GlobalUpgradeAllowanceBelowThreeFailsValidation(string allowance)
     {
         await using var server = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
@@ -65,7 +80,11 @@ public sealed class RelayAdmissionTests
     [Fact]
     public async Task InvalidRoutesDoNotConsumeTheGlobalUpgradeAllowance()
     {
-        await using var server = new RelayTestServer(options => options.RequestsPerMinute = 3);
+        await using var server = new RelayTestServer(options =>
+        {
+            options.RequestsPerMinute = 3;
+            options.RequestsPerMinutePerAccount = 1;
+        });
         await server.RejectedAsync($"sessions/{Guid.NewGuid()}/guest", HttpStatusCode.NotFound);
         await server.RejectedAsync($"sessions/{Guid.NewGuid()}/guest", HttpStatusCode.NotFound);
         await server.RejectedAsync($"sessions/{Guid.NewGuid()}/guest", HttpStatusCode.NotFound);

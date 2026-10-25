@@ -46,6 +46,18 @@ internal sealed class RelayQuotas
         }
     }
 
+    public int AdmitUpgrade(RelayIdentity identity)
+    {
+        lock (gate)
+        {
+            if (requests.Available(clock.GetUtcNow()) < 1) return 429;
+            var status = Request(identity, true);
+            if (status != 0) return status;
+            requests.Consume(1);
+            return 0;
+        }
+    }
+
     public bool TryReserve(bool session, [NotNullWhen(true)] out RelayReservation? reservation, out int status, params RelayIdentity[] identities)
     {
         lock (gate)
@@ -77,6 +89,8 @@ internal sealed class RelayQuotas
             var quotas = Resolve(keys, clock.GetUtcNow());
             if (quotas is null) return 503;
             if (!HasCapacity(keys, quotas, false)) return 429;
+            var status = Request(identity, true);
+            if (status != 0) return status;
             foreach (var (key, quota) in keys.Zip(quotas))
             {
                 quota.Routes++;

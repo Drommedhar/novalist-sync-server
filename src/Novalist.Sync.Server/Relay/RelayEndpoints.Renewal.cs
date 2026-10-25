@@ -3,7 +3,7 @@ namespace Novalist.Sync.Server.Relay;
 public static partial class RelayEndpoints
 {
     private static async Task<IResult> RenewAsync(HttpContext context, Guid connectionId,
-        RelayAuthorizations connections, RelayTokenIntrospection introspection, RelayQuotas quotas, TimeProvider clock)
+        RelayAuthorizations connections, RelayTokenIntrospection introspection, TimeProvider clock)
     {
         var identity = RelayIdentity.From(context);
         if (identity.Subject.Length == 0 || identity.Issuer.Length == 0 || RelayLifetime.ExpiresAt(context) <= clock.GetUtcNow())
@@ -12,8 +12,6 @@ public static partial class RelayEndpoints
         if (connection is null) return Results.NotFound();
         if (connection.Identity.Issuer != identity.Issuer || connection.Identity.Subject != identity.Subject)
             return Results.StatusCode(StatusCodes.Status403Forbidden);
-        var quota = quotas.Request(identity, true);
-        if (quota != 0) return Results.StatusCode(quota);
         var state = await introspection.CheckAsync(context, context.RequestAborted);
         if (state != RelayTokenState.Active)
             return Results.StatusCode(state == RelayTokenState.Unavailable ? 503 : 401);

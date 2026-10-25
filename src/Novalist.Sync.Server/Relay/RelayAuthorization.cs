@@ -16,7 +16,7 @@ internal sealed class RelayAuthorization(RelayIdentity identity, RelayCredential
     {
         lock (gate)
         {
-            if (closed || replacement.ExpiresAt < credential.ExpiresAt) return false;
+            if (closed || replacement.ExpiresAt <= credential.ExpiresAt) return false;
             credential = replacement;
             return true;
         }

@@ -20,6 +20,7 @@ internal sealed class RelayTestClock : TimeProvider
     public Task<TimeSpan> NextDelayAsync() => scheduled.Reader.ReadAsync(TestContext.Current.CancellationToken).AsTask()
         .WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
+    /// <summary>Runs due timers, including zero-due timers scheduled since the previous advance.</summary>
     public void Advance(TimeSpan duration)
     {
         lock (gate) now += duration;
@@ -55,7 +56,11 @@ internal sealed class RelayTestClock : TimeProvider
             }
         }
 
-        public void Fire() { lock (clock.gate) if (!disposed) callback(state); }
+        public void Fire()
+        {
+            lock (clock.gate) if (disposed) return;
+            callback(state);
+        }
         public void Dispose() { lock (clock.gate) { disposed = true; clock.timers.Remove(this); } }
         public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
     }

@@ -11,6 +11,7 @@ using Novalist.Sync.Server.Relay;
 var builder = WebApplication.CreateBuilder(args);
 
 var relayEnabled = builder.Configuration.GetValue("Relay:Enabled", false);
+builder.Services.AddSingleton(new RelayAuthenticationPolicy(RelayAuthentication.Required(builder.Configuration)));
 if (relayEnabled)
 {
     builder.Services.AddRelay(builder.Configuration);

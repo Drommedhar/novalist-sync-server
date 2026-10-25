@@ -21,12 +21,18 @@ public static class RelayTransportSecurity
 
     public static IApplicationBuilder UseRelayTransportSecurity(this IApplicationBuilder app, IHostEnvironment environment)
     {
+        var localConnection = new object();
+        app.Use((context, next) =>
+        {
+            context.Items[localConnection] =
+                context.Connection.RemoteIpAddress is { } remote && IPAddress.IsLoopback(remote) &&
+                context.Connection.LocalIpAddress is { } local && IPAddress.IsLoopback(local);
+            return next(context);
+        });
         app.UseForwardedHeaders();
         return app.Use(async (context, next) =>
         {
-            var localDevelopment = environment.IsDevelopment() &&
-                context.Connection.RemoteIpAddress is { } remote && IPAddress.IsLoopback(remote) &&
-                context.Connection.LocalIpAddress is { } local && IPAddress.IsLoopback(local);
+            var localDevelopment = environment.IsDevelopment() && context.Items[localConnection] is true;
             if (context.Request.Path.StartsWithSegments("/relay/v1") && !context.Request.IsHttps && !localDevelopment)
             {
                 context.Response.StatusCode = StatusCodes.Status400BadRequest;

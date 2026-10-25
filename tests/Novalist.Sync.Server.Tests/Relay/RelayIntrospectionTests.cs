@@ -13,6 +13,9 @@ public sealed class RelayIntrospectionTests
     [InlineData("{\"active\":true,\"iss\":\"https://other.invalid\"}", HttpStatusCode.Unauthorized)]
     [InlineData("{\"active\":true,\"exp\":0}", HttpStatusCode.Unauthorized)]
     [InlineData("{\"active\":\"true\"}", HttpStatusCode.ServiceUnavailable)]
+    [InlineData("{\"active\":true,\"exp\":\"bad\"}", HttpStatusCode.ServiceUnavailable)]
+    [InlineData("{\"active\":true,\"sub\":42}", HttpStatusCode.ServiceUnavailable)]
+    [InlineData("{\"active\":true,\"iss\":null}", HttpStatusCode.ServiceUnavailable)]
     [InlineData("{}", HttpStatusCode.ServiceUnavailable)]
     [InlineData("invalid", HttpStatusCode.ServiceUnavailable)]
     public async Task InactiveMismatchedOrMalformedIntrospectionCannotUpgrade(string body, HttpStatusCode expected)

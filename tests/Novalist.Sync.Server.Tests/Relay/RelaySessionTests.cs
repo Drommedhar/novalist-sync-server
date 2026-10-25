@@ -10,11 +10,13 @@ public sealed class RelaySessionTests
     [InlineData(true)]
     public async Task HostControlSendsACloseFrameForNormalShutdownAndExpiredAuthorization(bool expired)
     {
-        await using var server = new RelayTestServer(introspection: options => options.GracePeriodSeconds = 0);
-        using var control = server.Socket(expires: expired ? DateTime.UtcNow.AddSeconds(3) : null);
+        var clock = new RelayTestClock();
+        await using var server = new RelayTestServer(clock: clock, introspection: options => options.GracePeriodSeconds = 0);
+        using var control = server.Socket(expires: expired ? clock.GetUtcNow().UtcDateTime.AddMinutes(2) : null);
         await server.ConnectAsync(control, "host");
         await server.ReadIdAsync(control);
-        if (!expired) await control.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "finished", server.Token);
+        if (expired) clock.Advance(TimeSpan.FromSeconds(121));
+        else await control.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "finished", server.Token);
         var message = await control.ReceiveAsync(new byte[1].AsMemory(), server.Token);
         Assert.Equal(WebSocketMessageType.Close, message.MessageType);
         Assert.Equal(expired ? WebSocketCloseStatus.PolicyViolation : WebSocketCloseStatus.NormalClosure, control.CloseStatus);
@@ -117,8 +119,9 @@ public sealed class RelaySessionTests
     [InlineData("attach")]
     public async Task EveryAuthenticatedSocketClosesAtItsTokenExpiry(string expiring)
     {
-        await using var server = new RelayTestServer(introspection: options => options.GracePeriodSeconds = 0);
-        var expiry = DateTime.UtcNow.AddSeconds(3);
+        var clock = new RelayTestClock();
+        await using var server = new RelayTestServer(clock: clock, introspection: options => options.GracePeriodSeconds = 0);
+        var expiry = clock.GetUtcNow().UtcDateTime.AddMinutes(2);
         using var control = server.Socket(expires: expiring == "control" ? expiry : null);
         await server.ConnectAsync(control, "host");
         var session = await server.ReadIdAsync(control);
@@ -128,6 +131,7 @@ public sealed class RelaySessionTests
         using var host = server.Socket(expires: expiring == "attach" ? expiry : null);
         await server.ConnectAsync(host, $"sessions/{session}/routes/{route}");
         await joining;
+        clock.Advance(TimeSpan.FromSeconds(121));
         await server.ClosedAsync(guest);
         await server.ClosedAsync(host);
         if (expiring == "control")

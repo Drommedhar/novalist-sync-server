@@ -28,6 +28,8 @@ public sealed class RelayAuthorizationTests
         Assert.True(connection.Renew(new("new", now.AddMinutes(10), now)));
         Assert.Equal(RelayTokenState.Active, connection.Observe(old, RelayTokenState.Inactive, now, TimeSpan.FromMinutes(5)));
         Assert.False(connection.Renew(old));
+        Assert.False(connection.Renew(new("same-expiry", now.AddMinutes(10), now.AddSeconds(1))));
+        Assert.Equal("new", connection.Read().Token);
         Assert.Equal(RelayTokenState.Inactive, connection.Observe(connection.Read(), RelayTokenState.Inactive, now, TimeSpan.FromMinutes(5)));
         Assert.False(connection.Renew(new("newer", now.AddHours(1), now)));
     }

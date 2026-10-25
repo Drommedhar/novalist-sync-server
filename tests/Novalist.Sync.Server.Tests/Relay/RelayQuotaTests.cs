@@ -18,6 +18,7 @@ public sealed class RelayQuotaTests
         Assert.True(quotas.RequestUpgrade());
         Assert.True(quotas.RequestUpgrade());
         Assert.Equal(429, quotas.AdmitRouteAttachment(route, attached));
+        Assert.Equal(2, quotas.EntryCount);
         using var unrelated = Reserve(quotas, false, attached with { Subject = "other" });
         unrelated.Dispose();
         clock.Advance(TimeSpan.FromMinutes(1));
@@ -73,15 +74,19 @@ public sealed class RelayQuotaTests
     public void QuotaPartitionsAreBoundedAndIdleEntriesExpireWithoutResettingLiveAccounts()
     {
         var clock = new QuotaClock();
-        var quotas = new RelayQuotas(Options.Create(new RelayOptions { MaxQuotaEntries = 2 }), clock);
-        var first = new RelayIdentity("192.0.2.1", "", "");
+        var quotas = new RelayQuotas(Options.Create(new RelayOptions { MaxQuotaEntries = 3, MaxSessionsPerIp = 1, MaxSessionsPerAccount = 1 }), clock);
+        var first = new RelayIdentity("192.0.2.1", "issuer", "account");
         using var active = Reserve(quotas, true, first);
         Assert.Equal(0, quotas.Request(first with { Address = "192.0.2.2" }, false));
         Assert.Equal(503, quotas.Request(first with { Address = "192.0.2.3" }, false));
-        Assert.Equal(2, quotas.EntryCount);
+        Assert.Equal(3, quotas.EntryCount);
         clock.Advance(TimeSpan.FromMinutes(1));
         Assert.Equal(0, quotas.Request(first with { Address = "192.0.2.3" }, false));
-        Assert.Equal(2, quotas.EntryCount);
+        Assert.Equal(3, quotas.EntryCount);
+        Assert.False(quotas.TryReserve(true, out _, out var sameAddress, first));
+        Assert.Equal(429, sameAddress);
+        Assert.False(quotas.TryReserve(true, out _, out var sameAccount, first with { Address = "192.0.2.3" }));
+        Assert.Equal(429, sameAccount);
     }
 
     [Fact]
@@ -119,7 +124,7 @@ public sealed class RelayQuotaTests
     [Fact]
     public async Task BandwidthIsSharedAcrossRoutesAndCancellationReleasesBlockedSends()
     {
-        var clock = new QuotaClock();
+        var clock = new RelayTestClock();
         var quotas = new RelayQuotas(Options.Create(new RelayOptions { BytesPerSecond = 16384, BurstBytes = 16384 }), clock);
         var owner = new RelayIdentity("192.0.2.1", "issuer", "owner");
         using var firstRoute = Reserve(quotas, false, owner, new("192.0.2.2", "issuer", "guest"));

@@ -42,8 +42,9 @@ Clients obtain new access tokens using their locally held refresh token and send
 validation, identity matching and introspection update that connection in place
 and return 204. The host keeps its session ID and invitations; both route sockets
 renew independently. Refresh tokens never reach the relay. Rejected renewals do
-not replace the current credentials. Earlier credentials cannot overwrite newer
-ones, and a stale introspection result cannot terminate a renewed connection.
+not replace the current credentials. A replacement must expire later than the
+current credential; equal or earlier expirations return 409. A stale
+introspection result cannot terminate a renewed connection.
 In anonymous mode, the host generates a fresh
 256-bit random capability, encoded as 64 hexadecimal characters, and sends it in
 `X-Novalist-Relay-Host` on its control connection and each route attachment.
@@ -65,7 +66,7 @@ Control GUIDs use 32 hexadecimal characters. Guest streams carry only binary
 WebSocket frames. Each direction forwards at most 16 KiB per read, awaiting the
 destination write before reading again. A route forwards WebSocket close status
 and waits up to five seconds for the peer's close response before aborting.
-An unattached guest request expires after 15 seconds. Pending routes remain
+An unattached guest request expires after `RouteTimeoutSeconds` (15 seconds by default). Pending routes remain
 counted after the host reads their identifiers, and active routes remain counted
 until they close. There is no project-sized buffering. Closing the control
 socket removes its session and closes all routes. A new host receives a new ID;
@@ -109,11 +110,11 @@ must allow at least one 16 KiB packet.
 | `RequestsPerMinutePerAccount` | 60 | WebSocket connection attempts per authenticated issuer/subject |
 | `BytesPerSecond` | 8388608 | Sustained bytes per second per IP and account |
 | `BurstBytes` | 16777216 | Initial and maximum byte allowance per IP and account |
-| `MaxQuotaEntries` | 4096 | Maximum tracked IP/account quota entries |
+| `MaxQuotaEntries` | 4096 | Maximum tracked IP/account quota entries; at least 2 in authenticated mode |
 | `RouteTimeoutSeconds` | 15 | Time allowed for the host to attach |
 
 Only the IP request allowance is charged before authentication. Ordinary HTTP
-requests do not charge the account or global allowance. The global allowance is
+requests, including token renewals, do not charge the account or global allowance. Both allowances are
 charged just before an authorized upgrade, after endpoint-specific access and
 capacity checks; rejected authentication, missing routes and incorrect host
 capabilities cannot consume it. The same rule applies to valid anonymous
@@ -132,13 +133,17 @@ The HTTP response is 429 for request or per-account/IP capacity limits and 503
 for instance/session capacity limits, including a full quota table. These
 responses omit `Retry-After` because capacity release time is unknown; they do
 not create an accepted route or consume a live permit. A missing session
-or route returns 404, an incorrect host identity/capability returns 403, and an
+or route returns 404. Creating an anonymous host with a missing or malformed
+capability returns 400; an incorrect attachment identity/capability returns 403. An
 unattached route that times out or loses its host returns 410. Requests without
-required authentication return 401. Limits are enforced before new requests
+required authentication return 401. Authenticated tokens missing `iss` or `sub`
+return 403. Limits are enforced before new requests
 reach the hosting desktop; that desktop also caps its simultaneous attachments.
 If host attachment admission hits a quota, the guest remains pending and the host
 can retry the same route until its original attachment deadline. Rejected
-attachments do not reserve additional identities or spend a global upgrade token.
+attachments do not reserve live permits for additional identities or spend a
+global upgrade token. Capacity checks may create idle entries in the bounded
+quota table; those entries remain eligible for the usual inactivity eviction.
 
 The server sees authenticated issuer/subject when sign-in is required, the host
 capability on anonymous host requests, random session/route identifiers,

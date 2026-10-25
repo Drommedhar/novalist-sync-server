@@ -12,7 +12,7 @@ public static partial class RelayEndpoints
         if (!RelayAuthentication.Owns(session, context)) { context.Response.StatusCode = 403; return; }
         var route = session.ClaimRoute(routeId);
         if (route is null) { context.Response.StatusCode = 404; return; }
-        var status = quotas.AdmitRouteAttachment(route.Reservation, RelayIdentity.From(context));
+        var status = route.AdmitAttachment(quotas, RelayIdentity.From(context));
         if (status != 0)
         {
             route.ReleaseClaim();
@@ -23,7 +23,7 @@ public static partial class RelayEndpoints
         try
         {
             using var socket = await context.WebSockets.AcceptWebSocketAsync();
-            try { if (route.Attach(socket)) await route.Done.Task.WaitAsync(lifetime.Token); }
+            try { if (route.Attach(socket)) await route.Done.WaitAsync(lifetime.Token); }
             finally { route.Complete(); socket.Abort(); }
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }

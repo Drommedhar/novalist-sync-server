@@ -13,10 +13,16 @@ internal static class RelayIntrospectionResponse
         if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty("active", out var active)) return RelayTokenState.Unavailable;
         if (active.ValueKind == JsonValueKind.False) return RelayTokenState.Inactive;
         if (active.ValueKind != JsonValueKind.True) return RelayTokenState.Unavailable;
+        if (value.TryGetProperty("iss", out var issuer) && issuer.ValueKind != JsonValueKind.String ||
+            value.TryGetProperty("sub", out var subject) && subject.ValueKind != JsonValueKind.String)
+            return RelayTokenState.Unavailable;
         if (!Matches(value, "iss", identity.Issuer) || !Matches(value, "sub", identity.Subject)) return RelayTokenState.Inactive;
-        if (value.TryGetProperty("exp", out var expiry) &&
-            (expiry.ValueKind != JsonValueKind.Number || !expiry.TryGetInt64(out var seconds) || seconds <= now.ToUnixTimeSeconds()))
-            return RelayTokenState.Inactive;
+        if (value.TryGetProperty("exp", out var expiry))
+        {
+            if (expiry.ValueKind != JsonValueKind.Number || !expiry.TryGetDouble(out var seconds) || !double.IsFinite(seconds))
+                return RelayTokenState.Unavailable;
+            if (seconds <= (now - DateTimeOffset.UnixEpoch).TotalSeconds) return RelayTokenState.Inactive;
+        }
         return RelayTokenState.Active;
     }
 

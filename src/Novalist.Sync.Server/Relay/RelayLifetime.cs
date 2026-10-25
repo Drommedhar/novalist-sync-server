@@ -28,8 +28,8 @@ internal sealed class RelayLifetime : IAsyncDisposable
     }
 
     public static DateTimeOffset ExpiresAt(HttpContext context) =>
-        long.TryParse(context.User.FindFirst("exp")?.Value, NumberStyles.None, CultureInfo.InvariantCulture, out var seconds) &&
-        seconds is >= 0 and <= 253402300799 ? DateTimeOffset.FromUnixTimeSeconds(seconds) : DateTimeOffset.MinValue;
+        double.TryParse(context.User.FindFirst("exp")?.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds) &&
+        seconds is >= 0 and < 253402300799 ? DateTimeOffset.UnixEpoch.AddSeconds(seconds) : DateTimeOffset.MinValue;
 
     public Task CancelAsync() => stop.CancelAsync();
 
@@ -73,9 +73,12 @@ internal sealed class RelayLifetime : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        await stop.CancelAsync();
         if (authorization is not null && connections is not null) connections.Remove(authorization);
-        await monitor;
-        stop.Dispose();
+        try
+        {
+            await stop.CancelAsync();
+            await monitor;
+        }
+        finally { stop.Dispose(); }
     }
 }

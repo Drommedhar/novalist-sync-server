@@ -3,7 +3,7 @@ using Microsoft.Extensions.Options;
 
 namespace Novalist.Sync.Server.Relay;
 
-public sealed class RelaySessions
+internal sealed class RelaySessions
 {
     private readonly ConcurrentDictionary<Guid, RelaySession> sessions = new();
     private readonly RelayOptions options;

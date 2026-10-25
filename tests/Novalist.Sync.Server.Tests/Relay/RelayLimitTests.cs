@@ -23,8 +23,7 @@ public sealed class RelayLimitTests
         await first.CloseOutputAsync(System.Net.WebSockets.WebSocketCloseStatus.NormalClosure, "done", server.Token);
         await server.ClosedAsync(first);
         await server.RejectedAsync($"sessions/{session}/guest", HttpStatusCode.NotFound);
-        using var next = server.Socket();
-        await server.ConnectAsync(next, "host");
+        using var next = await server.ConnectAfterCleanupAsync("host", "owner");
         Assert.NotEqual(session, await server.ReadIdAsync(next));
     }
 

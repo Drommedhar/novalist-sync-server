@@ -8,13 +8,17 @@ internal static class RelayPackets
         Func<int, CancellationToken, Task>? throttle = null)
     {
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var forward = CopyAsync(guest, host, lifetime.Token, throttle);
-        var backward = CopyAsync(host, guest, lifetime.Token, throttle);
+        var closing = 0;
+        void StartClose()
+        {
+            if (Interlocked.Exchange(ref closing, 1) == 0) lifetime.CancelAfter(TimeSpan.FromSeconds(5));
+        }
+        var forward = CopyAsync(guest, host, lifetime.Token, throttle, StartClose);
+        var backward = CopyAsync(host, guest, lifetime.Token, throttle, StartClose);
         try
         {
             var finished = await Task.WhenAny(forward, backward);
             await finished;
-            lifetime.CancelAfter(TimeSpan.FromSeconds(5));
             await Task.WhenAll(forward, backward);
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
@@ -32,7 +36,7 @@ internal static class RelayPackets
     }
 
     private static async Task CopyAsync(WebSocket source, WebSocket destination, CancellationToken ct,
-        Func<int, CancellationToken, Task>? throttle)
+        Func<int, CancellationToken, Task>? throttle, Action startClose)
     {
         var buffer = new byte[16 * 1024];
         while (true)
@@ -40,6 +44,7 @@ internal static class RelayPackets
             var message = await source.ReceiveAsync(buffer.AsMemory(), ct);
             if (message.MessageType == WebSocketMessageType.Close)
             {
+                startClose();
                 await destination.CloseOutputAsync(source.CloseStatus ?? WebSocketCloseStatus.NormalClosure,
                     source.CloseStatusDescription, ct);
                 return;

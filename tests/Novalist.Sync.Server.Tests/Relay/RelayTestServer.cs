@@ -85,11 +85,12 @@ internal sealed class RelayTestServer : WebApplicationFactory<Program>
 
     public async Task<ClientWebSocket> ConnectAfterCleanupAsync(string path, string subject)
     {
-        while (true)
+        for (var attempt = 0; ; attempt++)
         {
             var socket = Socket(subject);
             try { await ConnectAsync(socket, path); return socket; }
-            catch (WebSocketException) when (socket.HttpStatusCode == HttpStatusCode.ServiceUnavailable)
+            catch (WebSocketException) when (attempt < 20 && !Token.IsCancellationRequested &&
+                socket.HttpStatusCode is HttpStatusCode.ServiceUnavailable or HttpStatusCode.TooManyRequests)
             {
                 socket.Dispose();
                 await Task.Delay(TimeSpan.FromMilliseconds(50), Token);
@@ -127,7 +128,7 @@ internal sealed class RelayTestServer : WebApplicationFactory<Program>
 
     public override async ValueTask DisposeAsync()
     {
-        await base.DisposeAsync();
-        deadline.Dispose();
+        try { await base.DisposeAsync(); }
+        finally { deadline.Dispose(); }
     }
 }

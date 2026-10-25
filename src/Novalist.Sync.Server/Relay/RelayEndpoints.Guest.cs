@@ -24,13 +24,13 @@ public static partial class RelayEndpoints
         deadline.CancelAfter(TimeSpan.FromSeconds(context.RequestServices.GetRequiredService<IOptions<RelayOptions>>().Value.RouteTimeoutSeconds));
         try
         {
-            var host = await route.Host.Task.WaitAsync(deadline.Token);
+            var host = await route.Host.WaitAsync(deadline.Token);
             deadline.CancelAfter(Timeout.InfiniteTimeSpan);
             using var guest = await AcceptSocketAsync(context);
             if (guest is null) return;
             await RelayPackets.TransferAsync(guest, host, lifetime.Token, reservation.ThrottleAsync);
         }
-        catch (OperationCanceledException) when (deadline.IsCancellationRequested || route.Done.Task.IsCompleted)
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested || route.Done.IsCompleted)
         {
             if (!context.Response.HasStarted) context.Response.StatusCode = 410;
         }

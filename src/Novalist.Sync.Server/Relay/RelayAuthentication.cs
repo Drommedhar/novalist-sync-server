@@ -2,12 +2,14 @@ using System.Security.Cryptography;
 
 namespace Novalist.Sync.Server.Relay;
 
+internal sealed record RelayAuthenticationPolicy(bool Required);
+
 internal static class RelayAuthentication
 {
     internal static bool Required(IConfiguration configuration) =>
         !configuration.GetValue("Relay:Enabled", false) || configuration.GetValue("Relay:RequireAuthentication", true);
 
-    internal static bool Required(HttpContext context) => Required(context.RequestServices.GetRequiredService<IConfiguration>());
+    internal static bool Required(HttpContext context) => context.RequestServices.GetRequiredService<RelayAuthenticationPolicy>().Required;
 
     internal static byte[]? HostProof(HttpContext context)
     {

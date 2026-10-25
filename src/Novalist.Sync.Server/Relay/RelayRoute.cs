@@ -11,9 +11,11 @@ internal sealed class RelayRoute(RelayReservation reservation)
     public RelayReservation Reservation { get; } = reservation;
     public CancellationToken Token => stop.Token;
     public Guid Id { get; } = Guid.NewGuid();
-    public TaskCompletionSource<WebSocket> Host { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public TaskCompletionSource Done { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public bool Attached { get { lock (gate) return Host.Task.IsCompletedSuccessfully; } }
+    private readonly TaskCompletionSource<WebSocket> host = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource done = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task<WebSocket> Host => host.Task;
+    public Task Done => done.Task;
+    public bool Attached { get { lock (gate) return Host.IsCompletedSuccessfully; } }
 
     public bool Claim()
     {
@@ -27,13 +29,18 @@ internal sealed class RelayRoute(RelayReservation reservation)
 
     public bool Attach(WebSocket socket)
     {
-        lock (gate) return !completed && claimed && Host.TrySetResult(socket);
+        lock (gate) return !completed && claimed && host.TrySetResult(socket);
+    }
+
+    public int AdmitAttachment(RelayQuotas quotas, RelayIdentity identity)
+    {
+        lock (gate) return completed || !claimed ? 410 : quotas.AdmitRouteAttachment(Reservation, identity);
     }
 
     public void ReleaseClaim()
     {
         lock (gate)
-            if (!completed && !Host.Task.IsCompletedSuccessfully) claimed = false;
+            if (!completed && !Host.IsCompletedSuccessfully) claimed = false;
     }
 
     public void Complete()
@@ -42,9 +49,9 @@ internal sealed class RelayRoute(RelayReservation reservation)
         {
             if (completed) return;
             completed = true;
-            Host.TrySetCanceled();
         }
+        done.TrySetResult();
         stop.Cancel();
-        Done.TrySetResult();
+        host.TrySetCanceled();
     }
 }

@@ -56,6 +56,11 @@ public class StartupTests(DatabaseFixture database)
     [InlineData("https://user@idp.example/realm", "openid")]
     [InlineData("https://idp.example/realm?query=1", "openid")]
     [InlineData("https://idp.example/realm#fragment", "openid")]
+    [InlineData("http://127.0.0.1/realm", "openid")]
+    [InlineData(" https://idp.example/realm ", "openid")]
+    [InlineData("https://idp.example/realm", "openid \tprofile")]
+    [InlineData("https://idp.example/realm", "openid profile\\invalid")]
+    [InlineData("https://idp.example/realm", "openid profile\"invalid")]
     public async Task DesktopConfiguration_RejectsInvalidAuthorityOrScope(string authority, string scope)
     {
         await using var server = new ProductionServer(database, authority, "novalist-sync", desktop: true, scope: scope);
@@ -65,9 +70,9 @@ public class StartupTests(DatabaseFixture database)
     }
 
     [Fact]
-    public async Task DesktopConfiguration_TrimsPublishedSettings()
+    public async Task DesktopConfiguration_TrimsClientIdAndScope()
     {
-        await using var server = new ProductionServer(database, " https://idp.test/realm ", "novalist-sync",
+        await using var server = new ProductionServer(database, "https://idp.test/realm", "novalist-sync",
             desktop: true, scope: " openid profile ", clientId: " novalist ");
         using var client = server.CreateClient();
         var configuration = await client.GetFromJsonAsync<NativeClientConfiguration>(Protocol.ClientConfigurationPath, TestContext.Current.CancellationToken);

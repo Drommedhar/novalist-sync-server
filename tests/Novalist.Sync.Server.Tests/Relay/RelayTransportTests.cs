@@ -48,7 +48,9 @@ public sealed class RelayTransportTests
     [InlineData("Development", "http", "203.0.113.1", false, 400)]
     [InlineData("Production", "http", "203.0.113.1", true, 400)]
     [InlineData("Production", "http", "192.0.2.10", true, 401)]
-    public async Task RelayRequiresTlsOrActualLoopbackDevelopment(string environment, string scheme, string address, bool forwarded, int expected)
+    [InlineData("Development", "http", "192.0.2.10", true, 400, "127.0.0.1", "http")]
+    public async Task RelayRequiresTlsOrActualLoopbackDevelopment(string environment, string scheme, string address, bool forwarded, int expected,
+        string forwardedAddress = "203.0.113.2", string forwardedScheme = "https")
     {
         await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
@@ -71,8 +73,8 @@ public sealed class RelayTransportTests
             context.Connection.LocalIpAddress = IPAddress.Loopback;
             if (forwarded)
             {
-                context.Request.Headers["X-Forwarded-For"] = "203.0.113.2";
-                context.Request.Headers["X-Forwarded-Proto"] = "https";
+                context.Request.Headers["X-Forwarded-For"] = forwardedAddress;
+                context.Request.Headers["X-Forwarded-Proto"] = forwardedScheme;
             }
         }, TestContext.Current.CancellationToken);
         Assert.Equal(expected, response.Response.StatusCode);

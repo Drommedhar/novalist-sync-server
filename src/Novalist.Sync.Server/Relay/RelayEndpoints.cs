@@ -8,7 +8,7 @@ public static partial class RelayEndpoints
     public static IEndpointRouteBuilder MapRelayEndpoints(this IEndpointRouteBuilder app)
     {
         var endpoints = app.MapGroup("/relay/v1");
-        if (RelayAuthentication.Required(app.ServiceProvider.GetRequiredService<IConfiguration>())) endpoints.RequireAuthorization();
+        if (app.ServiceProvider.GetRequiredService<RelayAuthenticationPolicy>().Required) endpoints.RequireAuthorization();
         else endpoints.AllowAnonymous();
         endpoints.MapGet("/host", HostAsync);
         endpoints.MapGet("/sessions/{sessionId:guid}/guest", GuestAsync);
@@ -26,8 +26,6 @@ public static partial class RelayEndpoints
             RelayLifetime.ExpiresAt(context) <= context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow())
         { context.Response.StatusCode = 401; return false; }
         if (!context.WebSockets.IsWebSocketRequest) { context.Response.StatusCode = 400; return false; }
-        var status = context.RequestServices.GetRequiredService<RelayQuotas>().Request(RelayIdentity.From(context), true);
-        if (Reject(context, status)) return false;
         if (!RelayAuthentication.Required(context)) return true;
         var state = await context.RequestServices.GetRequiredService<RelayTokenIntrospection>().CheckAsync(context, context.RequestAborted);
         if (state == RelayTokenState.Active &&
@@ -45,8 +43,8 @@ public static partial class RelayEndpoints
 
     private static async Task<WebSocket?> AcceptSocketAsync(HttpContext context)
     {
-        if (!context.RequestServices.GetRequiredService<RelayQuotas>().RequestUpgrade())
-        { context.Response.StatusCode = 429; return null; }
+        var status = context.RequestServices.GetRequiredService<RelayQuotas>().AdmitUpgrade(RelayIdentity.From(context));
+        if (Reject(context, status)) return null;
         return await context.WebSockets.AcceptWebSocketAsync();
     }
 

@@ -40,6 +40,7 @@ public sealed class AnonymousRelayTests
         {
             builder.UseEnvironment("Production");
             if (explicitDefault) builder.UseSetting("Relay:Enabled", "false");
+            builder.UseSetting("ConnectionStrings:Default", "Host=unused;Database=unused;Username=unused");
             builder.UseSetting("Relay:RequireAuthentication", "false");
         });
         Assert.Throws<OptionsValidationException>(() => server.CreateClient());
