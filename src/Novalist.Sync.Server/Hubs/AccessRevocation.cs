@@ -37,8 +37,10 @@ public sealed class AccessRevocation(
 
     public async Task DeleteProjectAsync(Guid ownerId, Guid projectId, CancellationToken ct)
     {
-        var users = await projects.DeleteAsync(ownerId, projectId, ct);
-        foreach (var user in users)
-            await NotifyRemovedAsync(projectId, user, ct);
+        await projects.DeleteAsync(ownerId, projectId, ct, async users =>
+        {
+            foreach (var user in users)
+                await NotifyRemovedAsync(projectId, user, CancellationToken.None);
+        });
     }
 }

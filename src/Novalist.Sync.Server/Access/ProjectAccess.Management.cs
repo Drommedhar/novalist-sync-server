@@ -11,9 +11,9 @@ public sealed partial class ProjectAccess
         await EnsureIsOwnerAsync(ownerId, projectId, ct);
         var members = await db.Memberships.Where(member => member.ProjectId == projectId)
             .Join(db.Users, member => member.UserId, user => user.Id,
-                (member, user) => new { user.Id, Name = user.UserName ?? user.Email ?? user.Id.ToString(), member.Role })
+                (member, user) => new { user.Id, user.UserName, user.Email, member.Role })
             .ToListAsync(ct);
-        return members.Select(member => new ProjectMember(member.Id, member.Name, member.Role switch
+        return members.Select(member => new ProjectMember(member.Id, DisplayName(member.UserName, member.Email, member.Id), member.Role switch
         {
             MembershipRole.Owner => ProjectRoles.Owner,
             MembershipRole.Contributor => ProjectRoles.Contributor,
@@ -22,7 +22,11 @@ public sealed partial class ProjectAccess
         })).ToArray();
     }
 
-    public async Task<IReadOnlyList<Guid>> DeleteAsync(Guid ownerId, Guid projectId, CancellationToken ct)
+    private static string DisplayName(string? username, string? email, Guid id) =>
+        !string.IsNullOrWhiteSpace(username) ? username : !string.IsNullOrWhiteSpace(email) ? email : id.ToString();
+
+    public async Task<IReadOnlyList<Guid>> DeleteAsync(Guid ownerId, Guid projectId, CancellationToken ct,
+        Func<IReadOnlyList<Guid>, Task>? onDeleted = null)
     {
         await EnsureIsOwnerAsync(ownerId, projectId, ct);
         await using var delivery = await PauseDeliveryAsync(projectId, ct);
@@ -34,6 +38,7 @@ public sealed partial class ProjectAccess
         await db.Updates.Where(update => update.ProjectId == projectId).ExecuteDeleteAsync(ct);
         await db.Memberships.Where(member => member.ProjectId == projectId).ExecuteDeleteAsync(ct);
         await transaction.CommitAsync(ct);
+        if (onDeleted is not null) await onDeleted(users);
         return users;
     }
 }

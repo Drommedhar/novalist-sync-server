@@ -7,6 +7,22 @@ namespace Novalist.Sync.Server.Tests.Access;
 
 public sealed class ProjectManagementAuthorizationTests(DatabaseFixture database)
 {
+    [Theory]
+    [InlineData("writer", "mail@example.test", "writer")]
+    [InlineData("  ", "mail@example.test", "mail@example.test")]
+    [InlineData(null, " \t ", null)]
+    public async Task MemberLabelsSkipBlankNamesAndEmails(string? username, string? email, string? expected)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var owner = await database.CreateUserAsync();
+        var project = await database.CreateProjectAsync((owner.Id, MembershipRole.Owner));
+        await using var db = database.CreateContext();
+        await db.Users.Where(user => user.Id == owner.Id).ExecuteUpdateAsync(
+            set => set.SetProperty(user => user.UserName, username).SetProperty(user => user.Email, email), ct);
+        var members = await new ProjectAccess(db, database.DeliveryGate).ListMembersAsync(owner.Id, project, ct);
+        Assert.Equal(expected ?? owner.Id.ToString(), Assert.Single(members).DisplayName);
+    }
+
     [Fact]
     public async Task UnauthorizedManagementIsRejectedWithoutWaitingForLiveDelivery()
     {

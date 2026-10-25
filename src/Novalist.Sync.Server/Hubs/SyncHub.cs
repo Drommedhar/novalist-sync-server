@@ -113,10 +113,11 @@ public sealed partial class SyncHub(
         }
     }
 
-    public Task LeaveProject(Guid projectId)
+    public async Task LeaveProject(Guid projectId)
     {
+        await using var delivery = await projects.PauseDeliveryAsync(projectId, Context.ConnectionAborted);
         connections.LeaveProject(Context.ConnectionId, projectId);
-        return Groups.RemoveFromGroupAsync(Context.ConnectionId, ProjectGroup(projectId), Context.ConnectionAborted);
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, ProjectGroup(projectId), Context.ConnectionAborted);
     }
 
     public async Task<long> Push(Envelope envelope)
@@ -183,11 +184,12 @@ public sealed partial class SyncHub(
             : throw new HubException($"Connect with ?{Protocol.DeviceIdParameter}=<guid>.");
     }
 
-    private async Task EnsureDeviceActiveAsync(CancellationToken cancellationToken)
+    private async Task<bool> EnsureDeviceActiveAsync(CancellationToken cancellationToken)
     {
         var key = await devices.AuthenticationKeyAsync(UserId, DeviceId, cancellationToken);
         if (key is not null && (!Context.Items.TryGetValue(AuthenticatedItem, out var authenticated) || !Equals(authenticated, true)))
             throw new AccessDeniedException("Prove possession of this device key before using the connection.");
+        return key is not null;
     }
 
     internal static string ProjectGroup(Guid projectId) => $"project:{projectId}";

@@ -24,6 +24,8 @@ public sealed class ProjectManagementTests(DatabaseFixture database)
         Assert.Equal(2, members.Length);
         Assert.Equal(ProjectRoles.Owner, members.Single(member => member.UserId == owner.UserId).Role);
         Assert.Equal(ProjectRoles.Contributor, members.Single(member => member.UserId == guest.UserId).Role);
+        var envelope = TestData.Envelope(project, owner.DeviceId, 1);
+        Assert.Equal(1, await owner.Hub.InvokeAsync<long>("Push", envelope, ct));
         await Assert.ThrowsAsync<HubException>(() => guest.Hub.InvokeAsync<ProjectMember[]>("ListProjectMembers", project, ct));
         await Assert.ThrowsAsync<HubException>(() => guest.Hub.InvokeAsync("RemoveProjectMember", project, owner.UserId, ct));
         await Assert.ThrowsAsync<HubException>(() => guest.Hub.InvokeAsync("DeleteProject", project, ct));
@@ -41,9 +43,11 @@ public sealed class ProjectManagementTests(DatabaseFixture database)
         var renewed = Guid.NewGuid();
         await owner.Hub.InvokeAsync("CreateInvitation", project, new CreateInvitation(renewed, DateTimeOffset.UtcNow.AddHours(1)), ct);
         await guest.Hub.InvokeAsync<InvitationGrant>("RedeemInvitation", renewed, ct);
-        await guest.Hub.InvokeAsync("JoinProject", project, ct);
         var replay = guest.Hub.StreamAsync<SequencedEnvelope>("CatchUp", project, 0L, ct);
-        await foreach (var _ in replay.WithCancellation(ct)) Assert.Fail("The empty project should have no updates.");
+        var restored = await replay.ToListAsync(ct);
+        Assert.Single(restored);
+        Assert.Equal(envelope.Ciphertext, restored[0].Envelope.Ciphertext);
+        await guest.Hub.InvokeAsync("JoinProject", project, ct);
         await owner.Hub.InvokeAsync("DeleteProject", project, ct);
         await Assert.ThrowsAsync<HubException>(() => owner.Hub.InvokeAsync("JoinProject", project, ct));
         await Assert.ThrowsAsync<HubException>(() => owner.Hub.InvokeAsync("CreateProject", project, ct));
