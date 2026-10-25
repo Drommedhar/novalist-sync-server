@@ -725,8 +725,8 @@ this as a public native client using authorization code with S256 PKCE and a
 loopback redirect at `http://127.0.0.1:{ephemeral-port}/callback`, following
 RFC 8252. No client secret is shipped with the desktop application.
 
-`GET /client-configuration` publishes only the protocol version, configured
-issuer URL, native client ID and scopes. These are public service configuration,
+`GET /client-configuration` publishes the protocol version, `authenticationRequired`,
+configured issuer URL, native client ID and scopes. These are public service configuration,
 not user or project data. The endpoint returns 503 when native sign-in is not
 configured; existing authenticated hub clients remain supported. This endpoint
 does not create an OIDC provider or register the native client in that provider.
