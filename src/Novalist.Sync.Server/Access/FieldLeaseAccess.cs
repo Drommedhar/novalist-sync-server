@@ -16,11 +16,11 @@ public sealed class FieldLeaseAccess(SyncDbContext db, DeviceRegistry devices, U
     public Task<FieldLeaseGrant> AcquireAsync(Guid userId, Guid deviceId, FieldLeaseRequest request, CancellationToken ct) =>
         WithinAsync(userId, deviceId, request, async (project, now) =>
         {
+            if (AcquisitionDeadline(request, now) <= now)
+                throw new ConflictException("This focus request expired. Start a new focus request.");
             var previous = await ReadAsync(request, ct);
             if (Owns(previous, deviceId, request, now))
                 return Grant(previous, project, now);
-            if (AcquisitionDeadline(request, now) <= now)
-                throw new ConflictException("This focus request expired. Start a new focus request.");
             if (await db.FieldLeaseAttempts.AnyAsync(attempt => attempt.ProjectId == request.ProjectId && attempt.DeviceId == deviceId && attempt.LeaseId == request.LeaseId, ct))
                 throw new ConflictException("A finished focus request needs a new lease identifier.");
             await RetireAsync(deviceId, request, now, ct);

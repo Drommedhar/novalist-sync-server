@@ -6,8 +6,12 @@ using Novalist.Sync.Server.Tests.Infrastructure;
 
 namespace Novalist.Sync.Server.Tests.Access;
 
-public sealed class FieldLeaseRetentionTests(DatabaseFixture database)
+public sealed class FieldLeaseRetentionTests : IAsyncLifetime
 {
+    private readonly DatabaseFixture database = new();
+    public ValueTask InitializeAsync() => database.InitializeAsync();
+    public ValueTask DisposeAsync() => database.DisposeAsync();
+
     [Fact]
     public async Task OriginalExpiredRequestCannotReturnAfterCleanupOrReleaseTheNextFocus()
     {

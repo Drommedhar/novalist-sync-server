@@ -7,8 +7,12 @@ using Novalist.Sync.Server.Tests.Infrastructure;
 
 namespace Novalist.Sync.Server.Tests.Access;
 
-public sealed class FieldLeaseTimeTests(DatabaseFixture database)
+public sealed class FieldLeaseTimeTests : IAsyncLifetime
 {
+    private readonly DatabaseFixture database = new();
+    public ValueTask InitializeAsync() => database.InitializeAsync();
+    public ValueTask DisposeAsync() => database.DisposeAsync();
+
     [Fact]
     public async Task HubReturnsDatabaseTimeAndAcceptsDeadlinesDerivedFromItDespiteHostClockSkew()
     {
@@ -26,6 +30,13 @@ public sealed class FieldLeaseTimeTests(DatabaseFixture database)
         var grant = await hub.InvokeAsync<FieldLeaseGrant>("AcquireFieldLease", request, ct);
         Assert.Equal(now, grant.ServerTime);
         Assert.Equal(device, grant.DeviceId);
+        var missingDeadline = await Assert.ThrowsAsync<HubException>(() => hub.InvokeAsync<FieldLeaseGrant>("AcquireFieldLease", request with { AcquireBefore = null }, ct));
+        Assert.Contains("acquisition deadline", missingDeadline.Message);
+        var tooLate = await Assert.ThrowsAsync<HubException>(() => hub.InvokeAsync<FieldLeaseGrant>("AcquireFieldLease", request with { AcquireBefore = now.AddMinutes(3) }, ct));
+        Assert.Contains("acquisition deadline", tooLate.Message);
+        var expired = await Assert.ThrowsAsync<HubException>(() => hub.InvokeAsync<FieldLeaseGrant>("AcquireFieldLease", request with { AcquireBefore = now }, ct));
+        Assert.Contains("focus request expired", expired.Message);
+        Assert.NotNull(await hub.InvokeAsync<FieldLeaseGrant?>("RenewFieldLease", request with { AcquireBefore = null }, ct));
         Assert.True(await hub.InvokeAsync<bool>("ReleaseFieldLease", request with { AcquireBefore = null }, ct));
         Assert.False(await hub.InvokeAsync<bool>("ReleaseFieldLease", request with { AcquireBefore = null }, ct));
         await using var db = database.CreateContext();
