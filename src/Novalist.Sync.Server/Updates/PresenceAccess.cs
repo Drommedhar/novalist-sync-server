@@ -5,7 +5,8 @@ using Novalist.Sync.Server.Data;
 
 namespace Novalist.Sync.Server.Updates;
 
-public sealed class PresenceAccess(SyncDbContext db, DeviceRegistry devices, ProjectAccess projects, AccessDeliveryGate deliveryGate)
+public sealed class PresenceAccess(SyncDbContext db, DeviceRegistry devices, ProjectAccess projects, AccessDeliveryGate deliveryGate,
+    TimeProvider clock)
 {
     public const int MaximumRecipients = 256;
 
@@ -14,6 +15,7 @@ public sealed class PresenceAccess(SyncDbContext db, DeviceRegistry devices, Pro
         var header = ValidateEnvelope(deviceId, envelope);
         await devices.EnsureActiveAsync(userId, deviceId, ct);
         await projects.EnsureCanReadAsync(userId, header.ProjectId, ct);
+        await EnsureEpochAsync(header, ct);
         return header;
     }
 
@@ -23,24 +25,22 @@ public sealed class PresenceAccess(SyncDbContext db, DeviceRegistry devices, Pro
         var header = await PreflightAsync(userId, deviceId, envelope, ct);
         if (joinedDevices.Count > MaximumRecipients) throw new PushRejectedException("Presence has too many receiving devices.");
 
-        await using var projectDelivery = await deliveryGate.ProjectAsync(header.ProjectId, ct);
         var candidates = joinedDevices.Append(deviceId).Distinct().ToArray();
-        var accounts = await db.Devices.Where(device => candidates.Contains(device.Id))
+        var accounts = await DeviceRegistry.ActiveDevices(db).Where(device => candidates.Contains(device.Id))
             .Join(db.Memberships.Where(member => member.ProjectId == header.ProjectId), device => device.UserId, member => member.UserId,
                 (device, member) => member.UserId).Distinct().ToListAsync(ct);
         await using var accountDelivery = await deliveryGate.AccountsAsync(accounts.Append(userId), ct);
+        await using var projectDelivery = await deliveryGate.ProjectAsync(header.ProjectId, ct);
         await devices.EnsureActiveAsync(userId, deviceId, ct);
         await projects.EnsureCanReadAsync(userId, header.ProjectId, ct);
-        var epoch = await db.Projects.Where(project => project.Id == header.ProjectId)
-            .Select(project => (long?)project.CurrentEpoch).SingleOrDefaultAsync(ct);
-        if (epoch != header.Epoch)
-            throw new PushRejectedException("The presence epoch is no longer current.");
-        var recipients = await DeviceRegistry.ActiveDevices(db).Where(device => candidates.Contains(device.Id) && accounts.Contains(device.UserId))
+        await EnsureEpochAsync(header, ct);
+        var recipients = await DeviceRegistry.ActiveDevices(db).Where(device => candidates.Contains(device.Id) && accounts.Contains(device.UserId) &&
+                db.Memberships.Any(member => member.ProjectId == header.ProjectId && member.UserId == device.UserId))
             .Select(device => device.Id).ToListAsync(ct);
         if (!recipients.Contains(deviceId))
             throw new AccessDeniedException("The sending device is no longer active.");
-        using var delivery = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        delivery.CancelAfter(TimeSpan.FromSeconds(1));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(1), clock);
+        using var delivery = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
         try
         {
             await deliver(header.ProjectId, recipients.ToHashSet(), delivery.Token);
@@ -52,11 +52,18 @@ public sealed class PresenceAccess(SyncDbContext db, DeviceRegistry devices, Pro
         }
     }
 
+    private async Task EnsureEpochAsync(EnvelopeHeader header, CancellationToken ct)
+    {
+        var epoch = await db.Projects.Where(project => project.Id == header.ProjectId)
+            .Select(project => (long?)project.CurrentEpoch).SingleOrDefaultAsync(ct);
+        if (epoch != header.Epoch) throw new PushRejectedException("The presence epoch is no longer current.");
+    }
+
     private static EnvelopeHeader ValidateEnvelope(Guid deviceId, Envelope envelope)
     {
         var header = EnvelopeHeader.Parse(envelope.Header);
         if (header.MsgType != MsgType.Presence || header.SenderDeviceId != deviceId ||
-            header.SenderSeq is 0 or > long.MaxValue || envelope.Nonce is not { Length: 24 } ||
+            header.SenderSeq == 0 || envelope.Nonce is not { Length: 24 } ||
             envelope.Signature is not { Length: 64 } || envelope.Ciphertext is not { Length: >= 16 and <= 4096 })
             throw new PushRejectedException("Invalid presence envelope.");
         return header;

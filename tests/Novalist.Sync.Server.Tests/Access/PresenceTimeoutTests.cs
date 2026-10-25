@@ -3,6 +3,7 @@ using Novalist.Sync.Contracts;
 using Novalist.Sync.Server.Data;
 using Novalist.Sync.Server.Tests.Infrastructure;
 using Novalist.Sync.Server.Updates;
+using Novalist.Sync.Server.Tests.Relay;
 
 namespace Novalist.Sync.Server.Tests.Access;
 
@@ -20,7 +21,8 @@ public sealed class PresenceTimeoutTests(DatabaseFixture database)
         var project = await database.CreateProjectAsync((user.Id, MembershipRole.Owner));
         await using var writing = database.CreateContext();
         await using var sending = database.CreateContext();
-        var presence = new PresenceAccess(sending, new(sending, database.DeliveryGate), new(sending, database.DeliveryGate), database.DeliveryGate);
+        var clock = new RelayTestClock();
+        var presence = new PresenceAccess(sending, new(sending, database.DeliveryGate), new(sending, database.DeliveryGate), database.DeliveryGate, clock);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -40,12 +42,15 @@ public sealed class PresenceTimeoutTests(DatabaseFixture database)
             }, caller.Token);
         try
         {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+            await await Task.WhenAny(entered.Task, delivery).WaitAsync(TimeSpan.FromSeconds(5), ct);
+            Assert.True(entered.Task.IsCompleted);
+            Assert.False(cancelled.Task.IsCompleted);
+            if (cancelCaller) await caller.CancelAsync();
             Assert.Null(sending.Database.CurrentTransaction);
             var update = new UpdateLog(writing).AppendAsync(user.Id, TestData.Envelope(project, device, 2), ct);
             Assert.Equal(1, await update.WaitAsync(TimeSpan.FromSeconds(5), ct));
             Assert.False(stopped);
-            if (cancelCaller) await caller.CancelAsync();
+            if (!cancelCaller) clock.Advance(TimeSpan.FromSeconds(1));
             await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
             Assert.False(stopped);
             finish.TrySetResult();
@@ -63,6 +68,7 @@ public sealed class PresenceTimeoutTests(DatabaseFixture database)
         {
             finish.TrySetResult();
             await caller.CancelAsync();
+            await Assert.ThrowsAnyAsync<Exception>(() => delivery);
         }
     }
 }

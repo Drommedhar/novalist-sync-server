@@ -14,6 +14,7 @@ public sealed class PresenceValidationTests(DatabaseFixture database)
     [InlineData("nonce")]
     [InlineData("signature")]
     [InlineData("ciphertext")]
+    [InlineData("short-ciphertext")]
     [InlineData("message")]
     [InlineData("sender")]
     [InlineData("sequence")]
@@ -33,6 +34,7 @@ public sealed class PresenceValidationTests(DatabaseFixture database)
             "nonce" => envelope with { Nonce = new byte[23] },
             "signature" => envelope with { Signature = new byte[63] },
             "ciphertext" => envelope with { Ciphertext = new byte[4097] },
+            "short-ciphertext" => envelope with { Ciphertext = new byte[15] },
             "message" => envelope with { Header = (header with { MsgType = MsgType.Update }).ToBytes() },
             "sender" => envelope with { Header = (header with { SenderDeviceId = Guid.NewGuid() }).ToBytes() },
             "sequence" => envelope with { Header = (header with { SenderSeq = 0 }).ToBytes() },
@@ -40,7 +42,7 @@ public sealed class PresenceValidationTests(DatabaseFixture database)
         };
         var transactions = new TransactionCounter();
         await using var db = database.CreateContext(transactions);
-        var presence = new PresenceAccess(db, new(db, database.DeliveryGate), new(db, database.DeliveryGate), database.DeliveryGate);
+        var presence = new PresenceAccess(db, new(db, database.DeliveryGate), new(db, database.DeliveryGate), database.DeliveryGate, TimeProvider.System);
         Task Send() => presence.DeliverAsync(sender.Id, device, envelope, new HashSet<Guid> { device },
             (_, _, _) => throw new InvalidOperationException("Invalid presence reached delivery."), ct);
         if (invalid is "membership" or "device") await Assert.ThrowsAsync<AccessDeniedException>(Send);
@@ -58,5 +60,28 @@ public sealed class PresenceValidationTests(DatabaseFixture database)
             Started++;
             return ValueTask.FromResult(result);
         }
+    }
+
+    [Theory]
+    [InlineData(16)]
+    [InlineData(4096)]
+    public async Task CiphertextBoundariesAndFullUnsignedSenderSequencesAreValid(int length)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var user = await database.CreateUserAsync();
+        var device = await database.CreateDeviceAsync(user.Id);
+        var project = await database.CreateProjectAsync((user.Id, MembershipRole.Owner));
+        var envelope = TestData.Envelope(project, device, 1, MsgType.Presence);
+        envelope = envelope with
+        {
+            Header = (EnvelopeHeader.Parse(envelope.Header) with { SenderSeq = ulong.MaxValue }).ToBytes(),
+            Ciphertext = new byte[length]
+        };
+        await using var db = database.CreateContext();
+        var presence = new PresenceAccess(db, new(db, database.DeliveryGate), new(db, database.DeliveryGate), database.DeliveryGate, TimeProvider.System);
+        var delivered = false;
+        await presence.DeliverAsync(user.Id, device, envelope, new HashSet<Guid> { device },
+            (_, _, _) => { delivered = true; return Task.CompletedTask; }, ct);
+        Assert.True(delivered);
     }
 }

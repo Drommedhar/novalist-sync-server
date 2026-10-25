@@ -5,13 +5,16 @@ using Novalist.Sync.Server.Access;
 using Novalist.Sync.Server.Data;
 using Novalist.Sync.Server.Tests.Infrastructure;
 using Novalist.Sync.Server.Updates;
+using Novalist.Sync.Server.Tests.Relay;
 
 namespace Novalist.Sync.Server.Tests.Access;
 
 public sealed class PresenceConcurrencyTests(DatabaseFixture database)
 {
-    [Fact]
-    public async Task OfflineMembersDoNotAcquireAccountGatesOrEnterTheRecipientSet()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OfflineOrRevokedMembersDoNotAcquireAccountGatesOrEnterTheRecipientSet(bool revoked)
     {
         var ct = TestContext.Current.CancellationToken;
         var owner = await database.CreateUserAsync();
@@ -19,14 +22,14 @@ public sealed class PresenceConcurrencyTests(DatabaseFixture database)
         var offline = await database.CreateUserAsync();
         var device = await database.CreateDeviceAsync(owner.Id);
         var guestDevice = await database.CreateDeviceAsync(guest.Id);
-        var offlineDevice = await database.CreateDeviceAsync(offline.Id);
+        var offlineDevice = await database.CreateDeviceAsync(offline.Id, revoked: revoked);
         var project = await database.CreateProjectAsync((owner.Id, MembershipRole.Owner), (guest.Id, MembershipRole.Contributor),
             (offline.Id, MembershipRole.Contributor));
         await using var offlineOperation = await database.DeliveryGate.AccountAsync(offline.Id, ct);
         await using var db = database.CreateContext();
-        var presence = new PresenceAccess(db, new(db, database.DeliveryGate), new(db, database.DeliveryGate), database.DeliveryGate);
+        var presence = new PresenceAccess(db, new(db, database.DeliveryGate), new(db, database.DeliveryGate), database.DeliveryGate, TimeProvider.System);
         await presence.DeliverAsync(owner.Id, device, TestData.Envelope(project, device, 1, MsgType.Presence),
-            new HashSet<Guid> { guestDevice }, (_, recipients, _) =>
+            revoked ? new HashSet<Guid> { guestDevice, offlineDevice } : new HashSet<Guid> { guestDevice }, (_, recipients, _) =>
             {
                 Assert.Contains(guestDevice, recipients);
                 Assert.DoesNotContain(offlineDevice, recipients);
@@ -45,7 +48,7 @@ public sealed class PresenceConcurrencyTests(DatabaseFixture database)
         var project = await database.CreateProjectAsync((owner.Id, MembershipRole.Owner), (guest.Id, MembershipRole.Contributor));
         await using var sending = database.CreateContext();
         await using var revoking = database.CreateContext();
-        var presence = new PresenceAccess(sending, new(sending, database.DeliveryGate), new(sending, database.DeliveryGate), database.DeliveryGate);
+        var presence = new PresenceAccess(sending, new(sending, database.DeliveryGate), new(sending, database.DeliveryGate), database.DeliveryGate, new RelayTestClock());
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var delivery = presence.DeliverAsync(owner.Id, device, TestData.Envelope(project, device, 1, MsgType.Presence), new HashSet<Guid> { device, guestDevice },
@@ -55,10 +58,12 @@ public sealed class PresenceConcurrencyTests(DatabaseFixture database)
                 entered.TrySetResult();
                 await release.Task.WaitAsync(token);
             }, ct);
+        Task? revoke = null;
         try
         {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
-            var revoke = new DeviceRegistry(revoking, database.DeliveryGate).RevokeAsync(guest.Id, guestDevice, ct);
+            await await Task.WhenAny(entered.Task, delivery).WaitAsync(TimeSpan.FromSeconds(5), ct);
+            Assert.True(entered.Task.IsCompleted);
+            revoke = new DeviceRegistry(revoking, database.DeliveryGate).RevokeAsync(guest.Id, guestDevice, ct);
             Assert.False(revoke.IsCompleted);
             Assert.Null(revoking.Database.CurrentTransaction);
             Assert.Null(sending.Database.CurrentTransaction);
@@ -76,7 +81,12 @@ public sealed class PresenceConcurrencyTests(DatabaseFixture database)
                     return Task.CompletedTask;
                 }, ct);
         }
-        finally { release.TrySetResult(); }
+        finally
+        {
+            release.TrySetResult();
+            await delivery;
+            if (revoke is not null) await revoke;
+        }
     }
 
 

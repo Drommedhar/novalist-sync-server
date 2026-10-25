@@ -589,12 +589,16 @@ to 4096 bytes. Presence never increments `serverSeq` or appears in catch-up.
 Clients throttle outgoing updates, reject stale/replayed presence and expire
 inactive cursors locally. The server does not interpret the encrypted state.
 
-Malformed and unauthorized presence is rejected before delivery coordination.
-Membership, epoch and active devices are rechecked under process-local project
-and account gates shared with access changes. Delivery holds no database
-transaction or row locks, so a slow recipient does not block ordinary pushes.
+Malformed, stale-epoch and unauthorized presence is rejected before recipient
+counting and delivery coordination. Transient sender sequences use the full
+nonzero unsigned 64-bit range because presence is never stored.
+Membership, epoch and active devices are rechecked under process-local account
+gates (in UUID order), then the project gate shared with access changes.
+Delivery holds no database transaction or row locks. Database writes can proceed
+while network delivery is pending; hub pushes wait for the bounded delivery
+barrier before appending and broadcasting.
 Each message snapshots at most 256 joined recipient connections, and takes
-account gates only for those recipients and the sender. Presence is rejected
+account gates only for active candidate recipients and the sender. Presence is rejected
 explicitly above that fan-out limit; project editing remains available. Delivery
 targets only captured connections that still belong to the project, after
 checking membership and active devices again under the gates.

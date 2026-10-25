@@ -13,9 +13,10 @@ namespace Novalist.Sync.Server.Tests.Hubs;
 public sealed class PresenceDeliveryTests(DatabaseFixture database)
 {
     [Theory]
-    [InlineData(false, true)]
-    [InlineData(true, false)]
-    public async Task MembershipAndEnvelopeFailuresDoNotRevealThePresenceCapacity(bool member, bool validEnvelope)
+    [InlineData(false, true, true)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    public async Task MembershipAndEnvelopeFailuresDoNotRevealThePresenceCapacity(bool member, bool validEnvelope, bool currentEpoch)
     {
         var ct = TestContext.Current.CancellationToken;
         await using var server = new SyncServer(database);
@@ -34,8 +35,9 @@ public sealed class PresenceDeliveryTests(DatabaseFixture database)
         }
         var envelope = TestData.Envelope(project, device, 1, MsgType.Presence);
         if (!validEnvelope) envelope = envelope with { Nonce = new byte[23] };
+        if (!currentEpoch) envelope = envelope with { Header = (EnvelopeHeader.Parse(envelope.Header) with { Epoch = 1 }).ToBytes() };
         var error = await Assert.ThrowsAsync<HubException>(() => hub.InvokeAsync("PublishPresence", envelope, ct));
-        Assert.Contains(member ? "Invalid presence envelope" : "not a member", error.Message);
+        Assert.Contains(!member ? "not a member" : !validEnvelope ? "Invalid presence envelope" : "epoch is no longer current", error.Message);
         Assert.DoesNotContain("Presence is limited to", error.Message);
     }
 

@@ -165,8 +165,9 @@ public class ConnectionRegistryTests
             _registry.JoinProject(connection.ConnectionId, project);
             _registry.JoinProject(connection.ConnectionId, otherProject);
         }
+        var targets = _registry.PresenceTargets(project, "sender", 256);
         _registry.RevokeProject(user, project);
-        Assert.Equal([other.ConnectionId], _registry.PresenceRecipients(project, active, _registry.PresenceTargets(project, "sender", 256)));
+        Assert.Equal([other.ConnectionId], _registry.PresenceRecipients(project, active, targets));
         Assert.Equivalent(new[] { joined.ConnectionId, other.ConnectionId }, _registry.PresenceRecipients(otherProject, active, _registry.PresenceTargets(otherProject, "sender", 256)));
         _registry.LeaveProject(joined.ConnectionId, project);
         Assert.True(_registry.ProjectRevoked(joined.ConnectionId, project));

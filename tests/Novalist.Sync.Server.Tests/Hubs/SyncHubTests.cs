@@ -518,8 +518,11 @@ public sealed class SyncHubTests(DatabaseFixture database) : IAsyncDisposable
         foreach (var entry in _server.Logs.Entries)
         {
             var text = entry.Message + entry.Exception + entry.ScopeText;
-            Assert.DoesNotContain(Convert.ToBase64String(valid.Ciphertext), text);
-            Assert.DoesNotContain(Convert.ToHexString(valid.Ciphertext), text);
+            foreach (var payload in invalid.Append(valid).SelectMany(value => new[] { value.Ciphertext, value.Nonce, value.Signature }).Where(value => value.Length > 0))
+            {
+                Assert.DoesNotContain(Convert.ToBase64String(payload), text);
+                Assert.DoesNotContain(Convert.ToHexString(payload), text);
+            }
             Assert.DoesNotContain(entry.Values.Concat(entry.ScopeValues), value => value is byte[] or Envelope);
         }
     }
