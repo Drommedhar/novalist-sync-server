@@ -7,8 +7,12 @@ using Novalist.Sync.Server.Updates;
 
 namespace Novalist.Sync.Server.Tests.Access;
 
-public sealed class ProjectEpochClockTests(DatabaseFixture database)
+public sealed class ProjectEpochClockTests : IAsyncLifetime
 {
+    private readonly DatabaseFixture database = new();
+    public ValueTask InitializeAsync() => database.InitializeAsync();
+    public ValueTask DisposeAsync() => database.DisposeAsync();
+
     [Fact]
     public async Task BegunCheckpointExpiresAndCanBeReplacedUsingDatabaseTime()
     {
