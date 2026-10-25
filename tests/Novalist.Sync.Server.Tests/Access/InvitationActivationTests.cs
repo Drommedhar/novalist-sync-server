@@ -48,10 +48,12 @@ public sealed class InvitationActivationTests(DatabaseFixture database)
         Assert.Equal(activated.DeviceId, recovered.DeviceId);
         Assert.Equal(activated.CertificateHash, recovered.CertificateHash);
         await reopened.InvokeAsync("JoinProject", project, ct);
-        await Assert.ThrowsAsync<HubException>(() => reopened.InvokeAsync<InvitationActivation>("ActivateInvitation",
+        var mismatch = await Assert.ThrowsAsync<HubException>(() => reopened.InvokeAsync<InvitationActivation>("ActivateInvitation",
             request with { CertificateHash = new byte[32] }, ct));
-        await Assert.ThrowsAsync<HubException>(() => reopened.InvokeAsync<InvitationActivation>("ActivateInvitation",
+        Assert.Contains("different device or certificate", mismatch.Message);
+        var length = await Assert.ThrowsAsync<HubException>(() => reopened.InvokeAsync<InvitationActivation>("ActivateInvitation",
             request with { CertificateHash = new byte[31] }, ct));
+        Assert.Contains("32-byte certificate fingerprint", length.Message);
         using var guestHttp = server.CreateClient(guestToken);
         using var ownerHttp = server.CreateClient(ownerToken);
         var guestAccount = await guestHttp.GetFromJsonAsync<DeviceRegistrationContext>("/devices/registration", ct);

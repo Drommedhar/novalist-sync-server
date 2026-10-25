@@ -19,7 +19,7 @@ public sealed partial class InvitationAccess
         var invitation = rows.SingleOrDefault();
         if (invitation is null || (invitation.RedeemedBy is { } claimant && claimant != userId))
             throw new AccessDeniedException("This invitation is unavailable.");
-        if (invitation.RedeemedBy is null)
+        if (invitation.RedeemedBy is null || invitation.ActivatedDeviceId is null && invitation.CertificateHash is null)
         {
             if (invitation.ExpiresAt <= clock.GetUtcNow()) throw new AccessDeniedException("This invitation is unavailable.");
             await AdmitAsync(invitation, userId, ct);

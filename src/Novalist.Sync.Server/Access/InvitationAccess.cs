@@ -7,15 +7,16 @@ namespace Novalist.Sync.Server.Access;
 
 public sealed partial class InvitationAccess(SyncDbContext db, ProjectAccess projects, TimeProvider clock)
 {
-    public async Task CreateAsync(Guid ownerId, Guid projectId, CreateInvitation request, CancellationToken ct, bool legacyAccount = false)
+    public async Task CreateAsync(Guid ownerId, Guid projectId, CreateInvitation request, CancellationToken ct, bool legacyAccount = false, Guid? deviceId = null)
     {
         await using var transaction = await AccountAccessLock.AcquireAsync(db, ownerId, legacyAccount, ct);
+        await EnsureDeviceAsync(ownerId, deviceId, ct);
         await LockProjectAsync(projectId, ct);
         await projects.EnsureIsOwnerAsync(ownerId, projectId, ct);
         var now = clock.GetUtcNow();
-        if (request.InvitationId == Guid.Empty || request.ExpiresAt <= now || request.ExpiresAt > now.AddDays(7))
-            throw new ArgumentException("An invitation needs a random identifier and an expiry within seven days.");
         var expiresAt = new DateTimeOffset(request.ExpiresAt.UtcTicks / 10 * 10, TimeSpan.Zero);
+        if (request.InvitationId == Guid.Empty || expiresAt <= now || expiresAt > now.AddDays(7))
+            throw new ArgumentException("An invitation needs a random identifier and an expiry within seven days.");
 
         db.Invitations.Add(new Invitation
         {
@@ -38,9 +39,10 @@ public sealed partial class InvitationAccess(SyncDbContext db, ProjectAccess pro
         await transaction.CommitAsync(ct);
     }
 
-    public async Task<InvitationGrant> RedeemAsync(Guid userId, Guid invitationId, CancellationToken ct, bool legacyAccount = false)
+    public async Task<InvitationGrant> RedeemAsync(Guid userId, Guid invitationId, CancellationToken ct, bool legacyAccount = false, Guid? deviceId = null)
     {
         await using var transaction = await AccountAccessLock.AcquireAsync(db, userId, legacyAccount, ct);
+        await EnsureDeviceAsync(userId, deviceId, ct);
         var projectId = await db.Invitations.AsNoTracking().Where(value => value.Id == invitationId)
             .Select(value => (Guid?)value.ProjectId).SingleOrDefaultAsync(ct)
             ?? throw new AccessDeniedException("This invitation is unavailable.");
@@ -77,19 +79,27 @@ public sealed partial class InvitationAccess(SyncDbContext db, ProjectAccess pro
         invitation.RedeemedBy = userId;
     }
 
-    public async Task RevokeAsync(Guid ownerId, Guid projectId, Guid invitationId, CancellationToken ct, bool legacyAccount = false)
+    public async Task RevokeAsync(Guid ownerId, Guid projectId, Guid invitationId, CancellationToken ct, bool legacyAccount = false, Guid? deviceId = null)
     {
         await using var transaction = await AccountAccessLock.AcquireAsync(db, ownerId, legacyAccount, ct);
+        await EnsureDeviceAsync(ownerId, deviceId, ct);
         await LockProjectAsync(projectId, ct);
         await projects.EnsureIsOwnerAsync(ownerId, projectId, ct);
         if (invitationId == Guid.Empty) throw new ArgumentException("An invitation identifier is required.");
-        await db.Database.ExecuteSqlInterpolatedAsync($"""
+        var affected = await db.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO invitations (id, project_id, expires_at)
             VALUES ({invitationId}, {projectId}, {DateTimeOffset.UnixEpoch})
             ON CONFLICT (id) DO UPDATE SET expires_at = {DateTimeOffset.UnixEpoch}
             WHERE invitations.project_id = {projectId}
             """, ct);
+        if (affected == 0) throw new ConflictException("The invitation belongs to a different project.");
         await transaction.CommitAsync(ct);
+    }
+
+    private async Task EnsureDeviceAsync(Guid userId, Guid? deviceId, CancellationToken ct)
+    {
+        if (deviceId is { } id && !await DeviceRegistry.ActiveDevices(db).AnyAsync(device => device.Id == id && device.UserId == userId, ct))
+            throw new AccessDeniedException("The device is no longer active for this account.");
     }
 
     private Task<List<Project>> LockProjectAsync(Guid projectId, CancellationToken ct) =>

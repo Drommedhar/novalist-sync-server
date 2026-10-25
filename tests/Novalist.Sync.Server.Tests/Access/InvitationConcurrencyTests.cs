@@ -14,7 +14,7 @@ public sealed class InvitationConcurrencyTests(DatabaseFixture database)
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task ActivationAndRedemptionUseTheSameLockOrder(bool activateFirst)
+    public async Task ActivationAndRedemptionSerializeClaimsOnTheProject(bool activateFirst)
     {
         var ct = TestContext.Current.CancellationToken;
         var owner = await database.CreateUserAsync();
@@ -41,7 +41,9 @@ public sealed class InvitationConcurrencyTests(DatabaseFixture database)
         var initial = activateFirst ? Activate(first) : Redeem(first);
         try
         {
-            await pause.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+            var entered = await Task.WhenAny(pause.Entered.Task, initial).WaitAsync(TimeSpan.FromSeconds(5), ct);
+            await entered;
+            Assert.True(pause.Entered.Task.IsCompleted, "The first operation must reach the membership insert.");
             var following = activateFirst ? Redeem(second) : Activate(second);
             await DatabaseLocks.WaitUntilBlockedAsync(database, process, ct);
             pause.Release.TrySetResult();

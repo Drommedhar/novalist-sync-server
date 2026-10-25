@@ -92,6 +92,7 @@ public sealed partial class SyncHub(
     {
         var cancellationToken = Context.ConnectionAborted;
         await using var access = await devices.PauseAccessChangesAsync(UserId, cancellationToken);
+        await using var delivery = await projects.PauseDeliveryAsync(projectId, cancellationToken);
         await EnsureDeviceActiveAsync(cancellationToken);
         await projects.EnsureCanReadAsync(UserId, projectId, cancellationToken);
 
@@ -120,6 +121,7 @@ public sealed partial class SyncHub(
         var cancellationToken = Context.ConnectionAborted;
         await using var access = await devices.PauseAccessChangesAsync(UserId, cancellationToken);
         var header = EnvelopeHeader.Parse(envelope.Header);
+        await using var delivery = await projects.PauseDeliveryAsync(header.ProjectId, cancellationToken);
 
         if (header.SenderDeviceId != DeviceId)
         {
@@ -157,6 +159,14 @@ public sealed partial class SyncHub(
 
         await foreach (var update in updateLog.ReadAfterAsync(projectId, afterServerSeq, cancellationToken))
         {
+            await using var access = await devices.PauseAccessChangesAsync(UserId, cancellationToken);
+            await using var delivery = await projects.PauseDeliveryAsync(projectId, cancellationToken);
+            try
+            {
+                await EnsureDeviceActiveAsync(cancellationToken);
+                await projects.EnsureCanReadAsync(UserId, projectId, cancellationToken);
+            }
+            catch (Exception ex) when (ClientErrorFilter.IsClientError(ex)) { throw new HubException(ex.Message); }
             yield return update;
         }
     }

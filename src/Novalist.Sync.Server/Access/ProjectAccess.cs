@@ -66,28 +66,31 @@ public sealed partial class ProjectAccess(SyncDbContext db, AccessDeliveryGate d
         }
     }
 
-    public async Task RemoveMemberAsync(Guid ownerId, Guid projectId, Guid memberId,
-        CancellationToken cancellationToken)
+    public async Task<bool> RemoveMemberAsync(Guid ownerId, Guid projectId, Guid memberId,
+        CancellationToken cancellationToken, Func<Task>? onRemoved = null)
     {
+        await EnsureIsOwnerAsync(ownerId, projectId, cancellationToken);
         if (memberId == ownerId)
         {
             throw new ConflictException($"Cannot remove owner from project {projectId}.");
         }
 
-        await EnsureIsOwnerAsync(ownerId, projectId, cancellationToken);
-        if (!await db.Users.AnyAsync(user => user.Id == memberId, cancellationToken)) return;
+        if (!await db.Users.AnyAsync(user => user.Id == memberId, cancellationToken)) return false;
         await using var delivery = await PauseDeliveryAsync(projectId, cancellationToken);
         await using var transaction = await AccountAccessLock.AcquireAsync(db, memberId, legacyAccount: false, cancellationToken);
         await db.Projects.FromSqlInterpolated($"SELECT * FROM projects WHERE id = {projectId} FOR UPDATE").ToListAsync(cancellationToken);
         await EnsureIsOwnerAsync(ownerId, projectId, cancellationToken);
 
-        await db.Memberships
+        var removed = await db.Memberships
             .Where(m => m.ProjectId == projectId && m.UserId == memberId)
             .ExecuteDeleteAsync(cancellationToken);
+        if (removed == 0) return false;
         await db.Invitations.Where(invitation => invitation.ProjectId == projectId &&
             (invitation.RedeemedBy == null || invitation.RedeemedBy == memberId))
             .ExecuteUpdateAsync(set => set.SetProperty(invitation => invitation.ExpiresAt, DateTimeOffset.UnixEpoch), cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        if (onRemoved is not null) await onRemoved();
+        return true;
     }
 
     private Task<MembershipRole?> GetRoleAsync(Guid userId, Guid projectId, CancellationToken cancellationToken) =>

@@ -1,8 +1,6 @@
-using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.SignalR.Client;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Novalist.Sync.Contracts;
 using Novalist.Sync.Server.Tests.Infrastructure;
 using NSec.Cryptography;
@@ -16,7 +14,14 @@ public sealed class DeviceCutoverTests(DatabaseFixture database)
     public async Task VerifiedEnrollmentWaitsForAnAuthorizedLegacyMutationToFinish()
     {
         var ct = TestContext.Current.CancellationToken;
-        var pause = new InvitationPause();
+        var enrollmentConnection = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var observingEnrollment = false;
+        var pause = new SqlCommandPause("INSERT INTO invitations", command =>
+        {
+            if (observingEnrollment && command.CommandText.Contains("SELECT * FROM users", StringComparison.Ordinal) &&
+                command.CommandText.Contains("FOR UPDATE", StringComparison.Ordinal) && command.Connection is NpgsqlConnection connection)
+                enrollmentConnection.TrySetResult(connection.ProcessID);
+        });
         await using var server = new SyncServer(database, commands: pause);
         var token = TestTokens.Create(Guid.NewGuid().ToString());
         using var http = server.CreateClient(token);
@@ -36,11 +41,16 @@ public sealed class DeviceCutoverTests(DatabaseFixture database)
         var proof = TestEnrollment.First(account.UserId, keys, signing, recoveryDevice);
         TestEnrollment.Authorize(http, keys.SigningPublicKey);
         var create = http.PostAsJsonAsync($"/projects/{project}/invitations", new CreateInvitation(Guid.NewGuid(), DateTimeOffset.UtcNow.AddHours(1)), ct);
+        Task<HttpResponseMessage>? upgrade = null;
         try
         {
-            await pause.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
-            var upgrade = http.PutAsJsonAsync("/devices/verified", proof, ct);
-            var processId = await pause.EnrollmentConnection.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+            var entered = await Task.WhenAny(pause.Entered.Task, create).WaitAsync(TimeSpan.FromSeconds(5), ct);
+            await entered;
+            if (create.IsCompleted) (await create).EnsureSuccessStatusCode();
+            Assert.True(pause.Entered.Task.IsCompleted, "Creation must reach the invitation insert.");
+            observingEnrollment = true;
+            upgrade = http.PutAsJsonAsync("/devices/verified", proof, ct);
+            var processId = await enrollmentConnection.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
             await DatabaseLocks.WaitUntilBlockedAsync(database, processId, ct);
             Assert.False(upgrade.IsCompleted, "Enrollment must wait until the already-authorized legacy mutation commits.");
             pause.Release.TrySetResult();
@@ -49,27 +59,11 @@ public sealed class DeviceCutoverTests(DatabaseFixture database)
             Assert.Equal(HttpStatusCode.NoContent, created.StatusCode);
             Assert.Equal(HttpStatusCode.NoContent, upgraded.StatusCode);
         }
-        finally { pause.Release.TrySetResult(); }
-    }
-
-    private sealed class InvitationPause : DbCommandInterceptor
-    {
-        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource<int> EnrollmentConnection { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command, CommandEventData eventData,
-            InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        finally
         {
-            if (Entered.Task.IsCompleted && command.CommandText.Contains("SELECT * FROM users", StringComparison.Ordinal) &&
-                command.CommandText.Contains("FOR UPDATE", StringComparison.Ordinal))
-                EnrollmentConnection.TrySetResult(((NpgsqlConnection)command.Connection!).ProcessID);
-            if (command.CommandText.Contains("INSERT INTO invitations", StringComparison.Ordinal))
-            {
-                Entered.TrySetResult();
-                await Release.Task.WaitAsync(cancellationToken);
-            }
-            return result;
+            pause.Release.TrySetResult();
+            using var created = await create;
+            if (upgrade is not null) { using var upgraded = await upgrade; }
         }
     }
 }

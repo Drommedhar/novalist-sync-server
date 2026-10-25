@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Novalist.Sync.Server.Hubs;
 using Novalist.Sync.Server.Data;
@@ -102,8 +103,9 @@ public sealed class InvitationEndpointsTests(DatabaseFixture database) : IAsyncD
         Assert.Equal(HttpStatusCode.NoContent, created.StatusCode);
         using var claim = await guestHttp.PostAsJsonAsync("/invitations/redeem", invitation, Ct);
         Assert.Equal(HttpStatusCode.OK, claim.StatusCode);
-        await using var scope = server.Services.CreateAsyncScope();
-        await scope.ServiceProvider.GetRequiredService<AccessRevocation>().RemoveMemberAsync(owner.Id, project, guest.Id, Ct);
+        await using var db = database.CreateContext();
+        await db.Memberships.Where(member => member.ProjectId == project && member.UserId == guest.Id).ExecuteDeleteAsync(Ct);
+        Assert.True((await db.Invitations.SingleAsync(value => value.Id == invitation.invitationId, Ct)).ExpiresAt > DateTimeOffset.UtcNow);
         using var retry = await guestHttp.PostAsJsonAsync("/invitations/redeem", invitation, Ct);
         Assert.Equal(HttpStatusCode.Forbidden, retry.StatusCode);
     }
@@ -185,6 +187,12 @@ public sealed class InvitationEndpointsTests(DatabaseFixture database) : IAsyncD
         Assert.Equal(HttpStatusCode.NoContent, created.StatusCode);
         using var retry = await ownerHttp.PostAsJsonAsync(path, invitation, Ct);
         Assert.Equal(HttpStatusCode.NoContent, retry.StatusCode);
+        await using var db = database.CreateContext();
+        var persisted = await db.Invitations.SingleAsync(value => value.Id == invitation.invitationId, Ct);
+        Assert.Equal(invitation.expiresAt.UtcTicks / 10 * 10, persisted.ExpiresAt.UtcTicks);
+        using var changed = await ownerHttp.PostAsJsonAsync(path,
+            new { invitationId = invitation.invitationId, expiresAt = invitation.expiresAt.AddMinutes(1) }, Ct);
+        Assert.Equal(HttpStatusCode.Conflict, changed.StatusCode);
         var claims = await Task.WhenAll(
             first.PostAsJsonAsync("/invitations/redeem", invitation, Ct),
             second.PostAsJsonAsync("/invitations/redeem", invitation, Ct));

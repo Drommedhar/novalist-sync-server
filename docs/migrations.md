@@ -16,3 +16,7 @@ Relay deployments need no database or migrations.
 key from each linked device to its authorizing device. Existing legacy records
 have null keys and are preserved. Rolling it back discards verified key and link
 metadata; restore a backup before resuming verified-device access after rollback.
+
+Rolling back `Invitations` drops invitations and device activation receipts.
+Back up those records before rollback; reapplying the migration creates empty
+tables and cannot recover invitation links or activation retries.

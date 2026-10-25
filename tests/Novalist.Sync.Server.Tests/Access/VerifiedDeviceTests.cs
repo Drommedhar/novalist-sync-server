@@ -29,7 +29,7 @@ public sealed class VerifiedDeviceTests(DatabaseFixture database) : IAsyncDispos
         var keys = new DevicePublicKeys(Guid.NewGuid(), new byte[32], new byte[32]);
         using var response = await client.PutAsJsonAsync(Protocol.VerifiedDevicesPath,
             new VerifiedDeviceRegistration(keys, new byte[64]), Ct);
-        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
     }
 
     [Fact]
@@ -42,9 +42,10 @@ public sealed class VerifiedDeviceTests(DatabaseFixture database) : IAsyncDispos
         using var firstSigning = Key.Create(SignatureAlgorithm.Ed25519);
         using var recoveryDevice = new TestRecoveryDevice();
         using var secondSigning = Key.Create(SignatureAlgorithm.Ed25519);
+        using var secondReceiving = Key.Create(KeyAgreementAlgorithm.X25519);
         using var receiving = Key.Create(KeyAgreementAlgorithm.X25519);
         var first = new DevicePublicKeys(Guid.NewGuid(), firstSigning.PublicKey.Export(KeyBlobFormat.RawPublicKey), receiving.PublicKey.Export(KeyBlobFormat.RawPublicKey));
-        var second = new DevicePublicKeys(Guid.NewGuid(), secondSigning.PublicKey.Export(KeyBlobFormat.RawPublicKey), receiving.PublicKey.Export(KeyBlobFormat.RawPublicKey));
+        var second = new DevicePublicKeys(Guid.NewGuid(), secondSigning.PublicKey.Export(KeyBlobFormat.RawPublicKey), secondReceiving.PublicKey.Export(KeyBlobFormat.RawPublicKey));
         TestEnrollment.Authorize(http, first.SigningPublicKey);
         using var firstResult = await http.PutAsJsonAsync("/devices/verified",
             TestEnrollment.First(account.UserId, first, firstSigning, recoveryDevice), Ct);
@@ -103,6 +104,7 @@ public sealed class VerifiedDeviceTests(DatabaseFixture database) : IAsyncDispos
         TestEnrollment.Authorize(http, keys.SigningPublicKey);
         using var response = await http.PutAsJsonAsync("/devices/verified", request, Ct);
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        http.DefaultRequestHeaders.Authorization = new("Bearer", token);
         using var legacyAgain = await http.PutAsync($"/devices/{Guid.NewGuid()}", null, Ct);
         Assert.Equal(HttpStatusCode.Forbidden, legacyAgain.StatusCode);
         using var invitation = await http.PostAsJsonAsync($"/projects/{project}/invitations", new CreateInvitation(Guid.NewGuid(), DateTimeOffset.UtcNow.AddHours(1)), Ct);
@@ -147,6 +149,8 @@ public sealed class VerifiedDeviceTests(DatabaseFixture database) : IAsyncDispos
 
         await using var second = server.CreateHubConnection(token, id);
         await second.StartAsync(Ct);
+        var secondChallenge = await second.InvokeAsync<DeviceConnectionChallenge>("GetDeviceChallenge", Ct);
+        Assert.NotEqual(challenge.Nonce, secondChallenge.Nonce);
         await Assert.ThrowsAsync<HubException>(() => second.InvokeAsync("AuthenticateDevice", signature, Ct));
         await Assert.ThrowsAsync<HubException>(() => second.InvokeAsync("CreateProject", Guid.NewGuid(), Ct));
         using var impostor = Key.Create(SignatureAlgorithm.Ed25519);

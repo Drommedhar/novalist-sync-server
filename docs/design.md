@@ -737,6 +737,13 @@ without interrupting authenticated verified devices. Legacy device registration,
 endpoints then reject that account. Its invitations use the authenticated hub
 methods instead. This prevents falling back to UUID-only access after revocation.
 
+Invitation mutations revalidate the calling device under the account lock.
+Legacy hub calls retain the legacy-account check throughout that transaction.
+Project removal, joining, update fan-out and each catch-up item share a delivery
+barrier. Removal holds it through the membership commit and connection group
+removal; database writes consistently lock the project before its memberships.
+Catch-up reads bounded batches so it can recheck access without an open reader.
+
 The server is pointed at the provider through configuration (environment
 variables, never `appsettings*.json`):
 

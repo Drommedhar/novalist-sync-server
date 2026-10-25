@@ -68,10 +68,15 @@ public sealed class MigrationUpgradeTests(DatabaseFixture database)
             Assert.Equivalent(update, await db.Updates.AsNoTracking().SingleAsync(ct), strict: true);
             await db.GetService<IMigrator>().MigrateAsync("20261019010739_InitialCreate", ct);
             Assert.Equal(1, await db.Database.SqlQuery<int>($"SELECT COUNT(*)::int AS \"Value\" FROM devices").SingleAsync(ct));
+            Assert.Equal(user, await db.Users.Select(value => value.Id).SingleAsync(ct));
+            Assert.Equal(MembershipRole.Owner, (await db.Memberships.AsNoTracking().SingleAsync(ct)).Role);
+            Assert.Equal(user, (await db.Memberships.AsNoTracking().SingleAsync(ct)).UserId);
             Assert.Equal(1, await db.Projects.Select(value => value.LastServerSeq).SingleAsync(ct));
             Assert.Equivalent(update, await db.Updates.AsNoTracking().SingleAsync(ct), strict: true);
             await db.Database.MigrateAsync(ct);
             Assert.Equal(device, (await db.Devices.SingleAsync(ct)).Id);
+            Assert.Equal(user, await db.Users.Select(value => value.Id).SingleAsync(ct));
+            Assert.Equal(MembershipRole.Owner, (await db.Memberships.AsNoTracking().SingleAsync(ct)).Role);
             Assert.Equal(1, await db.Projects.Select(value => value.LastServerSeq).SingleAsync(ct));
             Assert.Equivalent(update, await db.Updates.AsNoTracking().SingleAsync(ct), strict: true);
         }

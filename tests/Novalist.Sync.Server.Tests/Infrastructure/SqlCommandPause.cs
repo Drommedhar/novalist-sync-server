@@ -3,14 +3,15 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace Novalist.Sync.Server.Tests.Infrastructure;
 
-internal sealed class SqlCommandPause(string sql) : DbCommandInterceptor
+internal sealed class SqlCommandPause(string sql, Action<DbCommand>? observe = null) : DbCommandInterceptor
 {
     public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private async Task PauseAsync(DbCommand command, CancellationToken ct)
     {
-        if (!command.CommandText.Contains(sql, StringComparison.Ordinal)) return;
+        observe?.Invoke(command);
+        if (!command.CommandText.Replace("\"", "", StringComparison.Ordinal).Contains(sql, StringComparison.Ordinal)) return;
         Entered.TrySetResult();
         await Release.Task.WaitAsync(ct);
     }

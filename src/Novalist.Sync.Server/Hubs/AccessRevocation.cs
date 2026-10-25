@@ -21,11 +21,10 @@ public sealed class AccessRevocation(
     public async Task RemoveMemberAsync(Guid ownerId, Guid projectId, Guid memberId,
         CancellationToken cancellationToken)
     {
-        await projects.RemoveMemberAsync(ownerId, projectId, memberId, cancellationToken);
-
-        foreach (var connectionId in connections.ConnectionIdsOf(memberId))
+        await projects.RemoveMemberAsync(ownerId, projectId, memberId, cancellationToken, async () =>
         {
-            await hub.Groups.RemoveFromGroupAsync(connectionId, SyncHub.ProjectGroup(projectId), cancellationToken);
-        }
+            foreach (var connectionId in connections.ConnectionIdsOf(memberId))
+                await hub.Groups.RemoveFromGroupAsync(connectionId, SyncHub.ProjectGroup(projectId), CancellationToken.None);
+        });
     }
 }
