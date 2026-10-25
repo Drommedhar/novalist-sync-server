@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.AspNetCore.SignalR;
+using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.EntityFrameworkCore;
 using Novalist.Sync.Contracts;
 using Novalist.Sync.Server.Access;
@@ -12,6 +14,27 @@ namespace Novalist.Sync.Server.Tests.Access;
 public sealed class InvitationReviewTests(DatabaseFixture database)
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    [Fact]
+    public async Task LegacyAccountsUseHttpInvitationsAndCannotBypassHubDeviceProofs()
+    {
+        var owner = await database.CreateUserAsync();
+        var device = await database.CreateDeviceAsync(owner.Id);
+        var project = await database.CreateProjectAsync((owner.Id, MembershipRole.Owner));
+        await using var server = new SyncServer(database);
+        var token = TestTokens.Create(owner.Subject);
+        await using var hub = server.CreateHubConnection(token, device);
+        await hub.StartAsync(Ct);
+        var invitation = new CreateInvitation(Guid.NewGuid(), DateTimeOffset.UtcNow.AddHours(1));
+        var error = await Assert.ThrowsAsync<HubException>(() => hub.InvokeAsync("CreateInvitation", project, invitation, Ct));
+        Assert.Contains("verified device connection", error.Message);
+        using var http = server.CreateClient(token);
+        using var created = await http.PostAsJsonAsync($"/projects/{project}/invitations", invitation, Ct);
+        Assert.Equal(HttpStatusCode.NoContent, created.StatusCode);
+        await Assert.ThrowsAsync<HubException>(() => hub.InvokeAsync<InvitationGrant>("RedeemInvitation", invitation.InvitationId, Ct));
+        await Assert.ThrowsAsync<HubException>(() => hub.InvokeAsync("RevokeInvitation", project, invitation.InvitationId, Ct));
+        await Assert.ThrowsAsync<HubException>(() => hub.InvokeAsync<InvitationActivation>("ActivateInvitation", new ActivateInvitation(invitation.InvitationId, new byte[32]), Ct));
+    }
 
     [Fact]
     public async Task WrongProjectRevocationIsAConflictAndKeepsTheInvitationUsable()

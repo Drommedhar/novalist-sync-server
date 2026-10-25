@@ -542,7 +542,10 @@ deduplication of retries (`senderSeq`) and catch-up all depend on it.
 4. Server records membership.
 
 The implemented membership API also supports a single-use invitation link.
-An owner POSTs `CreateInvitation` to `/projects/{projectId}/invitations`, with
+The HTTP flow below is for accounts without verified devices. Verified accounts
+use `CreateInvitation`, `RedeemInvitation`/`ActivateInvitation`, and
+`RevokeInvitation` on a hub connection authenticated with a device possession proof.
+A legacy owner POSTs `CreateInvitation` to `/projects/{projectId}/invitations`, with
 a client-generated, cryptographically random UUID and an expiry no more than
 seven days away. A signed-in recipient POSTs `RedeemInvitation` to
 `/invitations/redeem`. The first account to claim it becomes a contributor;
@@ -738,7 +741,8 @@ endpoints then reject that account. Its invitations use the authenticated hub
 methods instead. This prevents falling back to UUID-only access after revocation.
 
 Invitation mutations revalidate the calling device under the account lock.
-Legacy hub calls retain the legacy-account check throughout that transaction.
+Hub invitation calls require verified device possession; legacy HTTP calls
+retain the legacy-account check throughout their transaction.
 Project removal, joining, update fan-out and each catch-up item share a delivery
 barrier. Removal holds it through the membership commit and connection group
 removal; database writes consistently lock the project before its memberships.
