@@ -42,6 +42,15 @@ public class ClientErrorFilterTests
     }
 
     [Fact]
+    public async Task ProgrammingArgumentErrorsRemainServerErrors()
+    {
+        var missing = new ArgumentNullException("internal-secret-parameter");
+        var range = new ArgumentOutOfRangeException("internal-secret-parameter");
+        Assert.Same(missing, await Assert.ThrowsAsync<ArgumentNullException>(() => InvokeThrowingAsync(missing)));
+        Assert.Same(range, await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => InvokeThrowingAsync(range)));
+    }
+
+    [Fact]
     public async Task OnConnected_TranslatesClientErrorsToo()
     {
         var context = new HubLifetimeContext(new FakeHubCallerContext(), new ServiceCollection().BuildServiceProvider(), new DummyHub());

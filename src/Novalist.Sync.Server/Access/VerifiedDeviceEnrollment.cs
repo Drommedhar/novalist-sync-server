@@ -10,14 +10,16 @@ public sealed class VerifiedDeviceEnrollment(UserDirectory users, DeviceRegistry
     public async Task RegisterAsync(ClaimsPrincipal principal, VerifiedDeviceRegistration request, string serverUrl, CancellationToken ct)
     {
         var user = await users.GetOrCreateAsync(principal, ct);
-        if (request.EnrollmentProof is { } proof)
-            await tokens.ValidateAsync(principal, challenges.Find(user.Id, serverUrl, request), proof.IdentityToken, ct);
+        using var claim = request.EnrollmentProof is null ? null : challenges.Claim(user.Id, serverUrl, request);
+        if (request.EnrollmentProof is { } proof && claim is { } claimed)
+            await tokens.ValidateAsync(principal, claimed.Challenge, proof.IdentityToken, ct);
         var change = await devices.RegisterVerifiedAsync(user.Id, request, serverUrl, keys =>
         {
-            if (request.EnrollmentProof is null) policy.Authorize(principal, keys);
-            else challenges.Consume(user.Id, serverUrl, request);
+            if (claim is null) policy.Authorize(principal, keys);
+            else claim.Validate();
         }, ct);
-        if (change == DeviceRegistrationChange.FirstVerified) connections.AbortUser(user.Id);
+        claim?.Complete();
+        if (change is DeviceRegistrationChange.FirstVerified or DeviceRegistrationChange.Unchanged) connections.AbortUnverifiedUser(user.Id);
         else if (change == DeviceRegistrationChange.Linked) connections.AbortDevice(request.Keys.DeviceId);
     }
 }

@@ -64,7 +64,7 @@ public sealed class DeviceEnrollmentTests(DatabaseFixture database)
     [InlineData("same-key", HttpStatusCode.Conflict)]
     [InlineData("same-receiving-key", HttpStatusCode.Conflict)]
     [InlineData("collision", HttpStatusCode.Conflict)]
-    public async Task InvalidRecoveryEnrollmentRollsBackBothDevices(string invalid, HttpStatusCode expected)
+    public async Task InvalidRecoveryEnrollmentPersistsNeitherDevice(string invalid, HttpStatusCode expected)
     {
         var ct = TestContext.Current.CancellationToken;
         await using var server = new SyncServer(database);

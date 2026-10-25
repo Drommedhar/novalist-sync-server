@@ -61,13 +61,15 @@ public sealed partial class SyncHub(
     public Task<DeviceConnectionChallenge> GetDeviceChallenge()
     {
         if (Context.Items.TryGetValue(ChallengeItem, out var value) && value is DeviceConnectionChallenge existing) return Task.FromResult(existing);
-        var challenge = new DeviceConnectionChallenge(UserId, DeviceId, Guid.NewGuid(), proofs.ServerUrl);
+        var serverUrl = proofs.ServerUrl ?? throw new HubException("Verified devices have not been configured.");
+        var challenge = new DeviceConnectionChallenge(UserId, DeviceId, Guid.NewGuid(), serverUrl);
         Context.Items[ChallengeItem] = challenge;
         return Task.FromResult(challenge);
     }
 
     public async Task AuthenticateDevice(byte[] signature)
     {
+        await using var access = await devices.PauseAccessChangesAsync(UserId, Context.ConnectionAborted);
         if (!Context.Items.Remove(ChallengeItem, out var value) || value is not DeviceConnectionChallenge challenge)
             throw new AccessDeniedException("Request a fresh device challenge first.");
         await devices.VerifyConnectionAsync(challenge, signature, Context.ConnectionAborted);
@@ -77,6 +79,7 @@ public sealed partial class SyncHub(
     public async Task CreateProject(Guid projectId)
     {
         var cancellationToken = Context.ConnectionAborted;
+        await using var access = await devices.PauseAccessChangesAsync(UserId, cancellationToken);
         await EnsureDeviceActiveAsync(cancellationToken);
 
         await projects.CreateAsync(UserId, projectId, cancellationToken);
@@ -87,6 +90,7 @@ public sealed partial class SyncHub(
     public async Task JoinProject(Guid projectId)
     {
         var cancellationToken = Context.ConnectionAborted;
+        await using var access = await devices.PauseAccessChangesAsync(UserId, cancellationToken);
         await EnsureDeviceActiveAsync(cancellationToken);
         await projects.EnsureCanReadAsync(UserId, projectId, cancellationToken);
 
@@ -113,6 +117,7 @@ public sealed partial class SyncHub(
     public async Task<long> Push(Envelope envelope)
     {
         var cancellationToken = Context.ConnectionAborted;
+        await using var access = await devices.PauseAccessChangesAsync(UserId, cancellationToken);
         var header = EnvelopeHeader.Parse(envelope.Header);
 
         if (header.SenderDeviceId != DeviceId)

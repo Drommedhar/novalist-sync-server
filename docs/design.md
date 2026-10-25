@@ -673,7 +673,8 @@ claims, and only used to find people when inviting them (§8.5).
 OIDC authenticates the **user**, not the device. Verified devices additionally
 answer a fresh `GetDeviceChallenge` using `AuthenticateDevice` before project
 or update operations. Public keys cannot be replaced under
-an existing device ID. The first verified registration serializes on the account
+an existing device ID or reused under another ID, including revoked records.
+Linked device records reference their authorizing device. The first verified registration serializes on the account
 and requires fresh MFA bound to both ordinary and recovery public-key records.
 The client obtains a five-minute, one-use enrollment challenge, then uses its
 nonce for a new authorization-code/PKCE browser login with `max_age=0`.
@@ -681,6 +682,10 @@ The server verifies the signed ID token's issuer, native-client audience,
 account subject, nonce, expiry, `amr` containing `mfa`, and a single `auth_time`
 within the last five minutes. Ordinary bearer access tokens authenticate the
 API calls. Registration signatures prove possession of the device keys.
+Tokens with multiple audiences also require `azp` matching the native client;
+any supplied `azp` must match it. An enrollment challenge is exclusively claimed
+during registration, consumed on success, and available again after a failed
+transaction until its original expiry.
 An existing `cnf.jkt` access-token flow remains accepted, but is no longer the
 only enrollment path. See [device-enrollment.md](device-enrollment.md) for client
 entry points, provider configuration, challenge limits, and metadata exposure.
@@ -695,7 +700,8 @@ account after the cutover using an earlier eligibility check.
 
 Legacy clients continue to work for accounts with no verified devices. Registering
 the first verified device opts that account into possession checks and closes its
-existing connections. Legacy device registration and access HTTP endpoints
+unverified connections. Retrying successful enrollment repeats that closure
+without interrupting authenticated verified devices. Legacy device registration and access HTTP endpoints
 then reject that account. This prevents falling back to UUID-only access after revocation.
 
 The server is pointed at the provider through configuration (environment

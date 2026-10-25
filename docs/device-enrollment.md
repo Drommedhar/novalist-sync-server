@@ -17,8 +17,9 @@ have independent Ed25519 signing and X25519 receiving keys.
    `/devices/verified`, authenticated with its current API access token.
 5. The server independently verifies the ID token against the configured
    provider's signing keys, issuer, native-client audience, account subject,
-   nonce, expiry, and recent MFA. It consumes the challenge while holding the
-   account enrollment lock, then atomically registers both devices.
+   nonce, expiry, and recent MFA. It exclusively claims the challenge while
+   registering both devices atomically. Successful registration consumes the
+   claim; a validation or database failure releases it for retry before expiry.
 
 The server receives public keys, the device association, signatures, and the
 short-lived identity proof. It stores no ID token, refresh token, recovery
@@ -26,8 +27,12 @@ secret, private key, or project key. Challenges are in memory and do not survive
 a restart. A replayed proof is rejected; after a lost successful response, the
 client can retry ordinary registration without the consumed enrollment proof.
 
-Configure `Authentication__NativeClient__ClientId` to the public desktop client
-and the existing Bearer authority/audience settings for API access. The provider
+Configure `Collaboration__ServerUrl` to the public HTTPS base URL and
+`Authentication__NativeClient__ClientId` to the public desktop client.
+Set `Authentication__NativeClient__Scope` to include `openid` and the provider's
+API scopes; add `offline_access` when refresh tokens are supported. Configure
+the existing Bearer authority/audience settings for API access. Device HTTP
+endpoints return 503 until a valid canonical server URL is configured. The provider
 must enforce MFA for that client's fresh authentication flow and issue truthful
 `amr` (including `mfa`) and `auth_time` in its signed ID token. Enrollment rejects
 missing or stale MFA claims; it does not infer MFA from a password login or an
@@ -41,7 +46,9 @@ identity. These are persistent-mode APIs; relay sessions use peer authentication
 and do not require persistent verified-device registration.
 
 Later devices require a signature from an active verified device or the saved
-recovery identity. Losing every ordinary device does not reopen bearer-only
+recovery identity. Each identity has distinct signing and receiving keys;
+revoked identities retain their keys to prevent re-enrollment under another ID.
+Losing every ordinary device does not reopen bearer-only
 enrollment, and a revoked recovery identity cannot authorize a replacement.
 Recovery of project content still requires its encryption keys.
 

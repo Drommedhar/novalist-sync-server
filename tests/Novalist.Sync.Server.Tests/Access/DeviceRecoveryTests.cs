@@ -34,7 +34,8 @@ public sealed class DeviceRecoveryTests(DatabaseFixture database)
         Assert.Equal(HttpStatusCode.NoContent, enrolled.StatusCode);
         await RevokeAsync(server, account.UserId, root.DeviceId, ct);
         using var replacementSigning = Key.Create(SignatureAlgorithm.Ed25519);
-        var replacement = Keys(replacementSigning, receiving);
+        using var replacementReceiving = Key.Create(KeyAgreementAlgorithm.X25519);
+        var replacement = Keys(replacementSigning, replacementReceiving);
         var unlinked = new VerifiedDeviceRegistration(replacement,
             SignatureAlgorithm.Ed25519.Sign(replacementSigning, DeviceProof.EncodeRegistration(SyncServer.PublicUrl, account.UserId, replacement)));
         TestEnrollment.Authorize(http, replacement.SigningPublicKey);

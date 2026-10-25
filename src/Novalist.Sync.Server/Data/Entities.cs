@@ -59,11 +59,3 @@ public sealed class StoredUpdate
     public byte[] Signature { get; set; } = [];
     public DateTimeOffset ReceivedAt { get; set; }
 }
-
-
-
-
-
-
-
-

@@ -14,7 +14,8 @@ public static class DeviceEnrollmentEndpoints
     private static async Task<IResult> CreateAsync(DeviceEnrollmentRequest request, ClaimsPrincipal principal,
         UserDirectory users, DeviceProofServer proofs, DeviceEnrollmentChallenges challenges, CancellationToken ct)
     {
-        try { return Results.Ok(challenges.Create((await users.GetOrCreateAsync(principal, ct)).Id, proofs.ServerUrl, request)); }
+        if (proofs.ServerUrl is not { } serverUrl) return Results.Problem("Verified devices have not been configured.", statusCode: 503);
+        try { return Results.Ok(challenges.Create((await users.GetOrCreateAsync(principal, ct)).Id, serverUrl, request)); }
         catch (FormatException error) { return Results.Problem(detail: error.Message, statusCode: 400); }
         catch (ConflictException error) { return Results.Problem(detail: error.Message, statusCode: 429); }
         catch (AccessDeniedException error) { return Results.Problem(detail: error.Message, statusCode: 403); }

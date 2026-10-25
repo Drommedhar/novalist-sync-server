@@ -42,6 +42,9 @@ public sealed partial class DeviceRegistry
         }
         else if (request.RecoveryDevice is not null)
             throw new ConflictException("A recovery device is enrolled only alongside the first verified device.");
+        if (await db.Devices.AnyAsync(d => d.Id != request.Keys.DeviceId &&
+                (d.SigningPublicKey == request.Keys.SigningPublicKey || d.ReceivingPublicKey == request.Keys.ReceivingPublicKey), ct))
+            throw new ConflictException("Device keys cannot be reused under another identity.");
         var device = existing ?? new Device { Id = request.Keys.DeviceId, UserId = userId, CreatedAt = DateTimeOffset.UtcNow };
         device.SigningPublicKey = request.Keys.SigningPublicKey.ToArray();
         device.ReceivingPublicKey = request.Keys.ReceivingPublicKey.ToArray();
@@ -49,9 +52,13 @@ public sealed partial class DeviceRegistry
         device.LinkingSignature = request.LinkingSignature?.ToArray();
         if (existing is null) db.Devices.Add(device);
         try { await db.SaveChangesAsync(ct); }
-        catch (DbUpdateException error) when (error.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: DevicePrimaryKey })
+        catch (DbUpdateException error) when (error.InnerException is PostgresException
         {
-            throw new ConflictException("The device identity is already in use.");
+            SqlState: PostgresErrorCodes.UniqueViolation,
+            ConstraintName: DevicePrimaryKey or "ix_devices_signing_public_key" or "ix_devices_receiving_public_key"
+        })
+        {
+            throw new ConflictException("The device identity or keys are already in use.");
         }
         await transaction.CommitAsync(ct);
         return first ? DeviceRegistrationChange.FirstVerified : DeviceRegistrationChange.Linked;
@@ -68,8 +75,10 @@ public sealed partial class DeviceRegistry
 
     public async Task<byte[]?> AuthenticationKeyAsync(Guid userId, Guid deviceId, CancellationToken ct)
     {
-        await EnsureActiveAsync(userId, deviceId, ct);
-        return await db.Devices.Where(d => d.Id == deviceId).Select(d => d.SigningPublicKey).SingleAsync(ct);
+        var device = await ActiveDevices(db).Where(d => d.Id == deviceId && d.UserId == userId)
+            .Select(d => new { d.SigningPublicKey }).SingleOrDefaultAsync(ct)
+            ?? throw new AccessDeniedException($"Device {deviceId} is not an active device of this user.");
+        return device.SigningPublicKey;
     }
 
     public async Task VerifyConnectionAsync(DeviceConnectionChallenge challenge, byte[] signature, CancellationToken ct)

@@ -23,20 +23,21 @@ public sealed class DeviceEnrollmentTokens(IOptionsMonitor<JwtBearerOptions> bea
             ValidateIssuer = true,
             ValidIssuer = provider.Issuer,
             ValidateAudience = true,
-            AudienceValidator = (audiences, _, _) => audiences is not null && audiences.SequenceEqual([client]),
+            AudienceValidator = (audiences, _, _) => audiences is not null && audiences.Contains(client, StringComparer.Ordinal),
             ValidateLifetime = true,
             RequireExpirationTime = true,
             ClockSkew = TimeSpan.FromSeconds(30),
             RequireSignedTokens = true,
             ValidateIssuerSigningKey = true,
-            IssuerSigningKeys = provider.SigningKeys
+            IssuerSigningKeys = provider.SigningKeys,
+            ConfigurationManager = options.ConfigurationManager as BaseConfigurationManager
         });
         ct.ThrowIfCancellationRequested();
         if (!validation.IsValid) throw new AccessDeniedException("The enrollment identity token could not be verified.");
         var claims = validation.ClaimsIdentity;
         if (!Single(claims, "iss", account.FindFirstValue("iss")) || !Single(claims, "sub", account.FindFirstValue("sub")) ||
             !Single(claims, "nonce", challenge.Nonce) ||
-            claims.HasClaim(value => value.Type == "azp") && !Single(claims, "azp", client))
+            (claims.FindAll("aud").Skip(1).Any() || claims.HasClaim(value => value.Type == "azp")) && !Single(claims, "azp", client))
             throw new AccessDeniedException("The enrollment sign-in does not match this account and challenge.");
         policy.AuthorizeMfa(new ClaimsPrincipal(claims));
     }

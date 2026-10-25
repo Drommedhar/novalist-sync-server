@@ -6,7 +6,11 @@ namespace Novalist.Sync.Server.Access;
 
 public sealed class DeviceEnrollmentChallenges(TimeProvider clock)
 {
-    private sealed record Pending(Guid User, byte[] KeysHash, DeviceEnrollmentChallenge Challenge);
+    private readonly TimeProvider clock = clock;
+    private sealed record Pending(Guid User, byte[] KeysHash, DeviceEnrollmentChallenge Challenge)
+    {
+        public bool Claimed { get; set; }
+    }
     private readonly object gate = new();
     private readonly Dictionary<Guid, Pending> pending = new();
 
@@ -26,7 +30,7 @@ public sealed class DeviceEnrollmentChallenges(TimeProvider clock)
         }
     }
 
-    public DeviceEnrollmentChallenge Find(Guid user, string server, VerifiedDeviceRegistration request)
+    public EnrollmentClaim Claim(Guid user, string server, VerifiedDeviceRegistration request)
     {
         var proof = request.EnrollmentProof ?? throw new AccessDeniedException("An enrollment proof is required.");
         var recovery = request.RecoveryDevice ?? throw new AccessDeniedException("A recovery device is required.");
@@ -34,15 +38,42 @@ public sealed class DeviceEnrollmentChallenges(TimeProvider clock)
         lock (gate)
         {
             if (!pending.TryGetValue(proof.ChallengeId, out var value) || value.User != user ||
-                value.Challenge.ExpiresAt <= clock.GetUtcNow() || !CryptographicOperations.FixedTimeEquals(hash, value.KeysHash))
+                value.Claimed || value.Challenge.ExpiresAt <= clock.GetUtcNow() || !CryptographicOperations.FixedTimeEquals(hash, value.KeysHash))
                 throw new AccessDeniedException("The enrollment challenge expired or does not match these device keys.");
-            return value.Challenge;
+            value.Claimed = true;
+            return new EnrollmentClaim(this, value.Challenge);
         }
     }
 
-    public void Consume(Guid user, string server, VerifiedDeviceRegistration request)
+    public sealed class EnrollmentClaim(DeviceEnrollmentChallenges owner, DeviceEnrollmentChallenge challenge) : IDisposable
     {
-        lock (gate) pending.Remove(Find(user, server, request).Id);
+        private bool finished;
+        public DeviceEnrollmentChallenge Challenge => challenge;
+
+        public void Validate()
+        {
+            lock (owner.gate)
+                if (finished || !owner.pending.ContainsKey(challenge.Id) || challenge.ExpiresAt <= owner.clock.GetUtcNow())
+                    throw new AccessDeniedException("The enrollment challenge expired.");
+        }
+
+        public void Complete()
+        {
+            lock (owner.gate)
+            {
+                owner.pending.Remove(challenge.Id);
+                finished = true;
+            }
+        }
+
+        public void Dispose()
+        {
+            lock (owner.gate)
+            {
+                if (!finished && owner.pending.TryGetValue(challenge.Id, out var value)) value.Claimed = false;
+                finished = true;
+            }
+        }
     }
 
     private static byte[] Hash(string server, Guid user, DevicePublicKeys keys, DevicePublicKeys recovery)

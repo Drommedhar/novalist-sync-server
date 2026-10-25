@@ -28,6 +28,13 @@ public sealed class ConnectionRegistry
         foreach (var connection in _connections.Values.Where(c => c.UserId == userId)) connection.Context.Abort();
     }
 
+    public void AbortUnverifiedUser(Guid userId)
+    {
+        foreach (var connection in _connections.Values.Where(c => c.UserId == userId))
+            if (!connection.Context.Items.TryGetValue("deviceAuthenticated", out var authenticated) || authenticated is not true)
+                connection.Context.Abort();
+    }
+
     public IReadOnlyList<string> ConnectionIdsOf(Guid userId) =>
         _connections.Values
             .Where(c => c.UserId == userId)

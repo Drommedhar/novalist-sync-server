@@ -23,6 +23,10 @@ public sealed class BrowserEnrollmentTests(DatabaseFixture database)
     [InlineData("future")]
     [InlineData("keys")]
     [InlineData("recovery")]
+    [InlineData("multi-valid")]
+    [InlineData("multi-missing-azp")]
+    [InlineData("multi-wrong-azp")]
+    [InlineData("wrong-azp")]
     public async Task BrowserMfaMustMatchTheAccountAndBothDeviceKeys(string? invalid)
     {
         var ct = TestContext.Current.CancellationToken;
@@ -46,27 +50,44 @@ public sealed class BrowserEnrollmentTests(DatabaseFixture database)
             ["amr"] = new[] { invalid == "missing-mfa" ? "pwd" : "mfa" },
             ["auth_time"] = DateTimeOffset.UtcNow.AddMinutes(invalid == "stale" ? -6 : invalid == "future" ? 2 : 0).ToUnixTimeSeconds()
         };
-        var token = new JsonWebTokenHandler().CreateToken(new SecurityTokenDescriptor
-        {
-            Issuer = invalid == "issuer" ? "https://other.example" : TestTokens.Issuer,
-            Audience = invalid == "audience" ? TestTokens.Audience : "novalist",
-            Expires = DateTime.UtcNow.AddMinutes(5),
-            Claims = claims,
-            SigningCredentials = new(invalid == "signature" ? new SymmetricSecurityKey(new byte[32]) : TestTokens.SigningKey, SecurityAlgorithms.HmacSha256)
-        });
+        var multipleAudiences = invalid?.StartsWith("multi-", StringComparison.Ordinal) == true;
+        if (multipleAudiences) claims["aud"] = new[] { "novalist", "another-audience" };
+        if (invalid is "multi-valid") claims["azp"] = "novalist";
+        if (invalid is "multi-wrong-azp" or "wrong-azp") claims["azp"] = "another-client";
+        var token = IdentityToken(claims, invalid, multipleAudiences);
         using var substituted = new TestRecoveryDevice();
         var ordinary = invalid == "keys" ? substituted : device;
         var backup = invalid == "recovery" ? substituted : recovery;
         var request = TestEnrollment.First(account.UserId, ordinary.Keys, ordinary.Signing, backup) with
         { EnrollmentProof = new(challenge.Id, token) };
         using var enrolled = await http.PutAsJsonAsync(Protocol.VerifiedDevicesPath, request, ct);
-        Assert.Equal(invalid is null ? HttpStatusCode.NoContent : HttpStatusCode.Forbidden, enrolled.StatusCode);
+        var accepted = invalid is null or "multi-valid";
+        Assert.Equal(accepted ? HttpStatusCode.NoContent : HttpStatusCode.Forbidden, enrolled.StatusCode);
         await using var db = database.CreateContext();
-        Assert.Equal(invalid is null ? 2 : 0, await db.Devices.CountAsync(value => value.UserId == account.UserId && value.SigningPublicKey != null, ct));
-        if (invalid is not null) return;
+        Assert.Equal(accepted ? 2 : 0, await db.Devices.CountAsync(value => value.UserId == account.UserId && value.SigningPublicKey != null, ct));
+        if (!accepted) return;
         using var replayed = await http.PutAsJsonAsync(Protocol.VerifiedDevicesPath, request, ct);
         Assert.Equal(HttpStatusCode.Forbidden, replayed.StatusCode);
         using var retry = await http.PutAsJsonAsync(Protocol.VerifiedDevicesPath, request with { EnrollmentProof = null }, ct);
         Assert.Equal(HttpStatusCode.NoContent, retry.StatusCode);
+        using var freshResponse = await http.PostAsJsonAsync(Protocol.DeviceEnrollmentPath, new DeviceEnrollmentRequest(device.Keys, recovery.Keys), ct);
+        var fresh = await freshResponse.Content.ReadFromJsonAsync<DeviceEnrollmentChallenge>(ct);
+        Assert.NotNull(fresh);
+        claims["nonce"] = fresh.Nonce;
+        var freshRequest = request with { EnrollmentProof = new(fresh.Id, IdentityToken(claims, invalid, multipleAudiences)) };
+        using var existing = await http.PutAsJsonAsync(Protocol.VerifiedDevicesPath, freshRequest, ct);
+        Assert.Equal(HttpStatusCode.NoContent, existing.StatusCode);
+        using var duplicate = await http.PutAsJsonAsync(Protocol.VerifiedDevicesPath, freshRequest, ct);
+        Assert.Equal(HttpStatusCode.Forbidden, duplicate.StatusCode);
     }
+
+    private static string IdentityToken(Dictionary<string, object> claims, string? invalid, bool multipleAudiences) =>
+        new JsonWebTokenHandler().CreateToken(new SecurityTokenDescriptor
+        {
+            Issuer = invalid == "issuer" ? "https://other.example" : TestTokens.Issuer,
+            Audience = multipleAudiences ? null : invalid == "audience" ? TestTokens.Audience : "novalist",
+            Expires = DateTime.UtcNow.AddMinutes(5),
+            Claims = claims,
+            SigningCredentials = new(invalid == "signature" ? new SymmetricSecurityKey(new byte[32]) : TestTokens.SigningKey, SecurityAlgorithms.HmacSha256)
+        });
 }

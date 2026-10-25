@@ -22,6 +22,10 @@ public sealed class DeviceProofTests
         byte[] linking = [.. Encoding.UTF8.GetBytes("novalist/v1/device-link"), .. Convert.FromHexString("FFEEDDCCBBAA99887766554433221100"), .. registration];
         Assert.Equal(linking, DeviceProof.EncodeLink("https://sync.example/", user, nonce, keys));
         Assert.Throws<FormatException>(() => DeviceProof.EncodeRegistration("https://sync.example/", user, keys with { SigningPublicKey = [] }));
+        Assert.Throws<FormatException>(() => DeviceProof.EncodeRegistration("https://sync.example/", Guid.Empty, keys));
+        Assert.Throws<FormatException>(() => DeviceProof.EncodeRegistration("https://sync.example/", user, keys with { DeviceId = Guid.Empty }));
+        Assert.Throws<FormatException>(() => DeviceProof.EncodeRegistration("https://sync.example/", user, keys with { ReceivingPublicKey = new byte[31] }));
+        Assert.Throws<FormatException>(() => DeviceProof.EncodeRegistration("http://sync.example/", user, keys));
         Assert.Throws<FormatException>(() => DeviceProof.EncodeConnection(new(user, device, Guid.Empty, "https://sync.example/")));
         Assert.Throws<FormatException>(() => DeviceProof.EncodeLink("https://sync.example/", user, Guid.Empty, keys));
     }

@@ -8,6 +8,9 @@ public sealed partial class DeviceRegistry(SyncDbContext db, AccessDeliveryGate 
 {
     private const string DevicePrimaryKey = "pk_devices";
 
+    internal ValueTask<IAsyncDisposable> PauseAccessChangesAsync(Guid userId, CancellationToken ct) =>
+        deliveryGate.AccountAsync(userId, ct);
+
     public async Task RegisterAsync(Guid userId, Guid deviceId, CancellationToken cancellationToken)
     {
         await using var transaction = await AccountAccessLock.AcquireAsync(db, userId, legacyAccount: true, cancellationToken);

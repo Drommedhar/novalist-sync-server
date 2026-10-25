@@ -11,3 +11,8 @@ the earlier combined `CollaborationAccess` migration or intermediate unreleased
 migrations need recreation if disposable, or a separate data-preserving
 reconciliation. Do not apply the stack over that unrelated migration history.
 Relay deployments need no database or migrations.
+
+`VerifiedDevices` adds unique signing/receiving public-key indexes and a foreign
+key from each linked device to its authorizing device. Existing legacy records
+have null keys and are preserved. Rolling it back discards verified key and link
+metadata; restore a backup before resuming verified-device access after rollback.

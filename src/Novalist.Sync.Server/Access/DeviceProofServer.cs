@@ -4,6 +4,14 @@ namespace Novalist.Sync.Server.Access;
 
 public sealed class DeviceProofServer(IConfiguration configuration)
 {
-    public string ServerUrl => DeviceProof.CanonicalServerUrl(configuration["Collaboration:ServerUrl"]
-        ?? throw new InvalidOperationException("Configure Collaboration:ServerUrl before enabling verified devices."));
+    public string? ServerUrl
+    {
+        get
+        {
+            var configured = configuration["Collaboration:ServerUrl"];
+            if (string.IsNullOrWhiteSpace(configured)) return null;
+            try { return DeviceProof.CanonicalServerUrl(configured); }
+            catch (FormatException) { return null; }
+        }
+    }
 }

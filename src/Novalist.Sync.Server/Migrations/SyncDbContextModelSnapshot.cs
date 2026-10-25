@@ -62,6 +62,10 @@ namespace Novalist.Sync.Server.Migrations
                     b.HasIndex("UserId")
                         .HasDatabaseName("ix_devices_user_id");
 
+                    b.HasIndex("SigningPublicKey").IsUnique().HasDatabaseName("ix_devices_signing_public_key");
+                    b.HasIndex("LinkedByDeviceId").HasDatabaseName("ix_devices_linked_by_device_id");
+                    b.HasIndex("ReceivingPublicKey").IsUnique().HasDatabaseName("ix_devices_receiving_public_key");
+
                     b.ToTable("devices", (string)null);
                 });
 
@@ -225,6 +229,8 @@ namespace Novalist.Sync.Server.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_devices_users_user_id");
+                    b.HasOne("Novalist.Sync.Server.Data.Device", null).WithMany().HasForeignKey("LinkedByDeviceId")
+                        .OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_devices_devices_linked_by_device_id");
                 });
 
             modelBuilder.Entity("Novalist.Sync.Server.Data.Membership", b =>
