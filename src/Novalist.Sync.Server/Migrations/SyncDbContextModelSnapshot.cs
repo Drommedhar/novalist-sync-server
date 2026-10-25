@@ -313,6 +313,8 @@ namespace Novalist.Sync.Server.Migrations
                     b.HasIndex("ProjectId")
                         .HasDatabaseName("ix_project_epoch_stages_project_id");
 
+                    b.HasIndex("CreatedAt").HasDatabaseName("ix_project_epoch_stages_created_at");
+
                     b.ToTable("project_epoch_stages", (string)null);
                 });
 

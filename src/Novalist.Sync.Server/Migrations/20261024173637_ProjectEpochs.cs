@@ -137,6 +137,10 @@ namespace Novalist.Sync.Server.Migrations
                 name: "ix_project_epoch_stages_project_id",
                 table: "project_epoch_stages",
                 column: "project_id");
+            migrationBuilder.CreateIndex(
+                name: "ix_project_epoch_stages_created_at",
+                table: "project_epoch_stages",
+                column: "created_at");
         }
 
         /// <inheritdoc />

@@ -694,6 +694,11 @@ email when no nonblank username exists, otherwise the account UUID).
 the empty project row remains as an identifier tombstone. Both operations remove
 affected connections from live delivery and send `ProjectAccessEnded(projectId)`.
 Registered encrypted projects require `CommitProjectEpoch` for member removal.
+Members with no registered project device can be removed directly. Epoch
+commits lock the initiator and removed account in database UUID order, then
+revalidate the initiating device before changing keys. The delivery barrier
+remains held through post-commit connection revocation, which finishes even
+when the initiating connection disconnects.
 Clients register their public project certificate; contributor registration must
 match the certificate fingerprint atomically bound during invitation activation.
 The server exposes registered certificate bytes and account/device IDs to the

@@ -56,7 +56,7 @@ public sealed class EphemeralStateCleanupTests(DatabaseFixture database)
             InterceptionResult<int> result, CancellationToken cancellationToken = default)
         {
             if (command.CommandText.Contains("DELETE FROM project_epoch_stages", StringComparison.Ordinal) && Interlocked.Increment(ref attempts) == 1)
-                throw new NpgsqlException("Temporary cleanup failure.");
+                throw new NpgsqlException("Temporary cleanup failure: opaque-payload-sentinel.");
             return ValueTask.FromResult(result);
         }
 
@@ -77,6 +77,8 @@ public sealed class EphemeralStateCleanupTests(DatabaseFixture database)
         {
             Assert.Equal(LogLevel.Warning, level);
             Assert.Contains(nameof(NpgsqlException), format(state, error));
+            Assert.Null(error);
+            Assert.DoesNotContain("opaque-payload-sentinel", format(state, error));
             Failed.TrySetResult();
         }
     }

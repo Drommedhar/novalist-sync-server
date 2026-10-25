@@ -8,7 +8,8 @@ public sealed partial class ProjectEpochAccess
     public async Task<ProjectEpochStatus> ReserveAsync(Guid user, Guid device, Guid projectId, Guid rotation, CancellationToken ct)
     {
         if (rotation == Guid.Empty) throw new FormatException("A rotation identifier is required.");
-        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await using var transaction = await AccountAccessLock.AcquireAsync(db, user, legacyAccount: false, ct, shared: true);
+        await EnsureDeviceAsync(user, device, ct);
         var project = await LockProjectAsync(projectId, ct);
         await projects.EnsureIsOwnerAsync(user, projectId, ct);
         if (project.CurrentEpoch == uint.MaxValue) throw new ConflictException("The project cannot advance its encryption epoch.");
@@ -29,16 +30,18 @@ public sealed partial class ProjectEpochAccess
 
     public async Task CancelAsync(Guid user, Guid device, Guid rotation, CancellationToken ct)
     {
-        var project = await db.ProjectEpochStages.AsNoTracking().Where(stage => stage.Id == rotation)
-            .Select(stage => (Guid?)stage.ProjectId).SingleOrDefaultAsync(ct);
-        if (project is null) return;
-        await projects.EnsureIsOwnerAsync(user, project.Value, ct);
         await using var transaction = await AccountAccessLock.AcquireAsync(db, user, legacyAccount: false, ct, shared: true);
-        await LockProjectAsync(project.Value, ct);
-        await projects.EnsureIsOwnerAsync(user, project.Value, ct);
-        if (!await DeviceRegistry.ActiveDevices(db).AnyAsync(value => value.Id == device && value.UserId == user, ct))
-            throw new AccessDeniedException("The cancelling device is unavailable.");
-        await db.ProjectEpochStages.Where(stage => stage.Id == rotation).ExecuteDeleteAsync(ct);
+        await EnsureDeviceAsync(user, device, ct);
+        var original = await db.ProjectEpochStages.AsNoTracking().Where(stage => stage.Id == rotation)
+            .Select(stage => new { stage.ProjectId, stage.DeviceId, stage.CreatedAt }).SingleOrDefaultAsync(ct);
+        if (original is null) return;
+        await projects.EnsureIsOwnerAsync(user, original.ProjectId, ct);
+        await LockProjectAsync(original.ProjectId, ct);
+        await projects.EnsureIsOwnerAsync(user, original.ProjectId, ct);
+        var deleted = await db.ProjectEpochStages.Where(stage => stage.Id == rotation && stage.ProjectId == original.ProjectId &&
+            stage.DeviceId == original.DeviceId && stage.CreatedAt == original.CreatedAt).ExecuteDeleteAsync(ct);
+        if (deleted == 0 && await db.ProjectEpochStages.AnyAsync(stage => stage.Id == rotation, ct))
+            throw new ConflictException("The project transition changed. Refresh and try again.");
         await transaction.CommitAsync(ct);
     }
 

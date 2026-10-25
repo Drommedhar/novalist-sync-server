@@ -63,8 +63,10 @@ public sealed class ProjectEpochTests(DatabaseFixture database)
         var ct = TestContext.Current.CancellationToken;
         var owner = await database.CreateUserAsync();
         var guest = await database.CreateUserAsync();
+        var otherGuest = await database.CreateUserAsync();
         var device = await database.CreateDeviceAsync(owner.Id);
-        var project = await database.CreateProjectAsync((owner.Id, MembershipRole.Owner), (guest.Id, MembershipRole.Contributor));
+        var project = await database.CreateProjectAsync((owner.Id, MembershipRole.Owner), (guest.Id, MembershipRole.Contributor),
+            (otherGuest.Id, MembershipRole.Contributor));
         await using var db = database.CreateContext();
         var service = new ProjectEpochAccess(db, new(db, database.DeliveryGate));
         await service.RegisterAsync(owner.Id, device, project, 0, RandomNumberGenerator.GetBytes(182), ct);
@@ -75,21 +77,32 @@ public sealed class ProjectEpochTests(DatabaseFixture database)
         await service.StageAsync(owner.Id, device, rotation, envelope, ct);
         await service.StageGrantAsync(owner.Id, device, rotation,
             new(device, RandomNumberGenerator.GetBytes(182), RandomNumberGenerator.GetBytes(128)), ct);
-        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        async Task<bool> Commit(Guid rotation)
+        var bothEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = 0;
+        var pause = new SqlCommandPause("SELECT * FROM users", command =>
         {
-            await using var connection = database.CreateContext();
-            var access = new ProjectEpochAccess(connection, new(connection, database.DeliveryGate));
-            await start.Task;
-            try { await access.CommitAsync(owner.Id, device, new(rotation, guest.Id, []), ct); return true; }
+            if (command.CommandText.Contains("SELECT * FROM users", StringComparison.Ordinal) && Interlocked.Increment(ref started) == 2)
+                bothEntered.TrySetResult();
+        });
+        async Task<bool> Commit(Guid removed)
+        {
+            await using var connection = database.CreateContext(pause);
+            var access = new ProjectEpochAccess(connection, new(connection, new AccessDeliveryGate()));
+            try { await access.CommitAsync(owner.Id, device, new(rotation, removed, []), ct); return true; }
             catch (ConflictException) { return false; }
         }
-        var commits = new[] { Commit(rotation), Commit(rotation) };
-        start.SetResult();
-        Assert.Single(await Task.WhenAll(commits), success => success);
+        var commits = Task.WhenAll(Commit(guest.Id), Commit(otherGuest.Id));
+        try
+        {
+            await await Task.WhenAny(bothEntered.Task, commits).WaitAsync(TimeSpan.FromSeconds(5), ct);
+            Assert.True(bothEntered.Task.IsCompleted, "Both transactions must pass preflight before acquiring database locks.");
+            pause.Release.TrySetResult();
+            Assert.Single(await commits, success => success);
+        }
+        finally { pause.Release.TrySetResult(); await commits; }
         Assert.Single(await db.Updates.Where(value => value.ProjectId == project).ToListAsync(ct));
         Assert.Single(await db.ProjectEpochKeyGrants.Where(value => value.ProjectId == project).ToListAsync(ct));
-        Assert.False(await db.Memberships.AnyAsync(value => value.ProjectId == project && value.UserId == guest.Id, ct));
+        Assert.Single(await db.Memberships.Where(value => value.ProjectId == project && value.UserId != owner.Id).ToListAsync(ct));
     }
 
     [Fact]
@@ -172,8 +185,8 @@ public sealed class ProjectEpochTests(DatabaseFixture database)
         var rotation = Guid.NewGuid();
         await service.ReserveAsync(owner.Id, device, project, rotation, ct);
         if (expire)
-            await db.ProjectEpochStages.Where(stage => stage.Id == rotation)
-                .ExecuteUpdateAsync(set => set.SetProperty(stage => stage.CreatedAt, DateTimeOffset.UtcNow.AddMinutes(-3)), ct);
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE project_epoch_stages SET created_at = clock_timestamp() - interval '3 minutes' WHERE id = {rotation}", ct);
         else await service.CancelAsync(owner.Id, device, rotation, ct);
         db.ChangeTracker.Clear();
         Assert.Equal(1, await new UpdateLog(db).AppendAsync(owner.Id, TestData.Envelope(project, device, 1), ct));

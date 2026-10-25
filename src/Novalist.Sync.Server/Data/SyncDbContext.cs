@@ -31,6 +31,7 @@ public sealed class SyncDbContext(DbContextOptions<SyncDbContext> options) : DbC
         });
         modelBuilder.Entity<ProjectEpochStage>(entry =>
         {
+            entry.HasIndex(value => value.CreatedAt);
             entry.Property(value => value.Id).ValueGeneratedNever();
             entry.HasOne<Project>().WithMany().HasForeignKey(value => value.ProjectId);
         });

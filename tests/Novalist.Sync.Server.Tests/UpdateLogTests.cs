@@ -90,6 +90,10 @@ public class UpdateLogTests(DatabaseFixture database)
         Assert.Equal(1, await log.AppendAsync(userId, envelope, Ct));
         var rejected = await Assert.ThrowsAsync<PushRejectedException>(() => log.AppendAsync(userId, CreateEnvelope(projectId, deviceId, 2), Ct));
         Assert.Contains("epoch", rejected.Message);
+        Assert.Equal(1, await db.Projects.Where(project => project.Id == projectId).Select(project => project.LastServerSeq).SingleAsync(Ct));
+        var retained = Assert.Single(await db.Updates.Where(update => update.ProjectId == projectId).ToListAsync(Ct));
+        Assert.Equal(envelope.Ciphertext, retained.Ciphertext);
+        Assert.Equal(1, retained.SenderSeq);
         await db.Memberships.Where(member => member.ProjectId == projectId && member.UserId == userId).ExecuteDeleteAsync(Ct);
         await Assert.ThrowsAsync<PushRejectedException>(() => log.AppendAsync(userId, envelope, Ct));
     }

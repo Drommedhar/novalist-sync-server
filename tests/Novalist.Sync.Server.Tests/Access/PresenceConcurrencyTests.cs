@@ -110,7 +110,7 @@ public sealed class PresenceConcurrencyTests(DatabaseFixture database)
         await epochs.StageAsync(owner.Id, ownerDevice, rotation, checkpoint, ct);
         var pause = new SqlCommandPause("FROM memberships");
         await using var sending = database.CreateContext(pause);
-        var presence = new PresenceAccess(sending, new(sending, database.DeliveryGate), new(sending, database.DeliveryGate), database.DeliveryGate);
+        var presence = new PresenceAccess(sending, new(sending, database.DeliveryGate), new(sending, database.DeliveryGate), database.DeliveryGate, new RelayTestClock());
         var sender = removeSender ? guest.Id : owner.Id;
         var device = removeSender ? guestDevice : ownerDevice;
         var delivered = false;
@@ -149,7 +149,7 @@ public sealed class PresenceConcurrencyTests(DatabaseFixture database)
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var sending = database.CreateContext();
-        var presence = new PresenceAccess(sending, new(sending, database.DeliveryGate), new(sending, database.DeliveryGate), database.DeliveryGate);
+        var presence = new PresenceAccess(sending, new(sending, database.DeliveryGate), new(sending, database.DeliveryGate), database.DeliveryGate, new RelayTestClock());
         var envelope = TestData.Envelope(project, device, 1, MsgType.Presence);
         var delivery = presence.DeliverAsync(owner.Id, device, envelope, new HashSet<Guid> { device, guestDevice }, async (id, recipients, cancellationToken) =>
         {

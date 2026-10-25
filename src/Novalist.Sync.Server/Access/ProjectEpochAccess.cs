@@ -21,6 +21,7 @@ public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess p
     {
         ValidateCertificate(certificate);
         await using var transaction = await AccountAccessLock.AcquireAsync(db, user, false, ct);
+        await EnsureDeviceAsync(user, device, ct);
         var current = await LockProjectAsync(project, ct);
         await projects.EnsureCanReadAsync(user, project, ct);
         if (current.CurrentEpoch != epoch) throw new ConflictException("Refresh the project encryption keys first.");
@@ -60,7 +61,8 @@ public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess p
     {
         if (request.RotationId == Guid.Empty || request.PreviousEpoch == uint.MaxValue || request.PreviousServerSeq < 0)
             throw new FormatException("Invalid project epoch transition.");
-        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await using var transaction = await AccountAccessLock.AcquireAsync(db, user, legacyAccount: false, ct, shared: true);
+        await EnsureDeviceAsync(user, device, ct);
         var project = await LockProjectAsync(request.ProjectId, ct);
         await projects.EnsureIsOwnerAsync(user, request.ProjectId, ct);
         CheckBoundary(project, request.PreviousEpoch, request.PreviousServerSeq);
@@ -86,7 +88,8 @@ public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess p
         if (header.MsgType != MsgType.Update || header.SenderDeviceId != device || header.SenderSeq > long.MaxValue ||
             envelope.Nonce is not { Length: 24 } || envelope.Signature is not { Length: 64 } || envelope.Ciphertext is not { Length: > 16 and <= 24592 })
             throw new FormatException("Invalid staged checkpoint envelope.");
-        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await using var transaction = await AccountAccessLock.AcquireAsync(db, user, legacyAccount: false, ct, shared: true);
+        await EnsureDeviceAsync(user, device, ct);
         var stage = await LockStageAsync(rotation, device, ct);
         await projects.EnsureIsOwnerAsync(user, stage.ProjectId, ct);
         if (header.ProjectId != stage.ProjectId || header.Epoch != stage.PreviousEpoch + 1)
@@ -129,6 +132,12 @@ public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess p
 
     private Task<DateTimeOffset> DatabaseTimeAsync(CancellationToken ct) =>
         db.Database.SqlQuery<DateTimeOffset>($"SELECT clock_timestamp() AS \"Value\"").SingleAsync(ct);
+
+    private async Task EnsureDeviceAsync(Guid user, Guid device, CancellationToken ct)
+    {
+        if (!await DeviceRegistry.ActiveDevices(db).AnyAsync(value => value.Id == device && value.UserId == user, ct))
+            throw new AccessDeniedException("The initiating device is unavailable.");
+    }
 
     private static void CheckBoundary(Project project, long epoch, long sequence)
     {

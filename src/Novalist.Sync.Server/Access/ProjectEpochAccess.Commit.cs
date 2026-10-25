@@ -8,16 +8,19 @@ namespace Novalist.Sync.Server.Access;
 
 public sealed partial class ProjectEpochAccess
 {
-    public async Task<Guid> CommitAsync(Guid user, Guid device, CommitProjectEpoch request, CancellationToken ct)
+    public async Task<Guid> CommitAsync(Guid user, Guid device, CommitProjectEpoch request, CancellationToken ct,
+        Func<Guid, Task>? onCommitted = null)
     {
         if (request.RemovedMemberId == user) throw new ConflictException("The owner cannot remove themselves.");
         var projectId = await db.ProjectEpochStages.AsNoTracking().Where(value => value.Id == request.RotationId).Select(value => (Guid?)value.ProjectId).SingleOrDefaultAsync(ct)
             ?? throw new ConflictException("The project transition is unavailable.");
         await projects.EnsureIsOwnerAsync(user, projectId, ct);
         await using var delivery = await projects.PauseDeliveryAsync(projectId, ct);
-        await using var transaction = await AccountAccessLock.AcquireAsync(db, request.RemovedMemberId, false, ct);
+        await using var transaction = await AccountAccessLock.AcquireManyAsync(db, [user, request.RemovedMemberId], ct);
+        await EnsureDeviceAsync(user, device, ct);
         var project = await LockProjectAsync(projectId, ct);
         var stage = await LockStageAsync(request.RotationId, device, ct);
+        if (stage.ProjectId != project.Id) throw new ConflictException("The project transition changed. Refresh and try again.");
         await projects.EnsureIsOwnerAsync(user, project.Id, ct);
         if (!await db.Memberships.AnyAsync(value => value.ProjectId == project.Id && value.UserId == request.RemovedMemberId, ct))
             throw new ConflictException("The account being removed is not a member of this project.");
@@ -57,6 +60,7 @@ public sealed partial class ProjectEpochAccess
         await db.SaveChangesAsync(ct);
         await db.ProjectEpochStages.Where(value => value.ProjectId == project.Id).ExecuteDeleteAsync(ct);
         await transaction.CommitAsync(ct);
+        if (onCommitted is not null) await onCommitted(project.Id);
         return project.Id;
     }
 
