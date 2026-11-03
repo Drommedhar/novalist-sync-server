@@ -39,10 +39,12 @@ public sealed class UpdateLog(SyncDbContext db)
         {
             var assigned = await db.Database
                 .SqlQuery<long>($"""
-                                 WITH writer AS (
+                                 WITH target AS MATERIALIZED (
+                                    SELECT id FROM projects WHERE id = {header.ProjectId} FOR UPDATE
+                                 ), writer AS (
                                     SELECT 1
                                     FROM memberships
-                                    WHERE project_id = {header.ProjectId}
+                                    WHERE project_id IN (SELECT id FROM target)
                                         AND user_id = {userId}
                                         AND role IN ({owner}, {contributor})
                                     FOR SHARE
@@ -102,16 +104,19 @@ public sealed class UpdateLog(SyncDbContext db)
         long afterServerSeq,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var updates = db.Updates
-            .AsNoTracking()
-            .Where(u => u.ProjectId == projectId && u.ServerSeq > afterServerSeq)
-            .OrderBy(u => u.ServerSeq)
-            .Select(u => new SequencedEnvelope(u.ServerSeq, new Envelope(u.Header, u.Nonce, u.Ciphertext, u.Signature)))
-            .AsAsyncEnumerable();
-
-        await foreach (var update in updates.WithCancellation(cancellationToken))
+        while (true)
         {
-            yield return update;
+            var batch = await db.Updates.AsNoTracking()
+                .Where(u => u.ProjectId == projectId && u.ServerSeq > afterServerSeq)
+                .OrderBy(u => u.ServerSeq).Take(128)
+                .Select(u => new SequencedEnvelope(u.ServerSeq, new Envelope(u.Header, u.Nonce, u.Ciphertext, u.Signature)))
+                .ToListAsync(cancellationToken);
+            foreach (var update in batch)
+            {
+                afterServerSeq = update.ServerSeq;
+                yield return update;
+            }
+            if (batch.Count < 128) yield break;
         }
     }
 }
