@@ -22,6 +22,9 @@ public sealed class SyncDbContext(DbContextOptions<SyncDbContext> options) : DbC
         {
             device.Property(d => d.Id).ValueGeneratedNever();
             device.HasOne<User>().WithMany().HasForeignKey(d => d.UserId);
+            device.HasOne<Device>().WithMany().HasForeignKey(d => d.LinkedByDeviceId).OnDelete(DeleteBehavior.Restrict);
+            device.HasIndex(d => d.SigningPublicKey).IsUnique();
+            device.HasIndex(d => d.ReceivingPublicKey).IsUnique();
         });
 
         modelBuilder.Entity<Project>(project =>
@@ -45,5 +48,6 @@ public sealed class SyncDbContext(DbContextOptions<SyncDbContext> options) : DbC
             update.HasOne<Device>().WithMany().HasForeignKey(u => u.SenderDeviceId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
+
     }
 }

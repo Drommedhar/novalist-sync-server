@@ -18,6 +18,7 @@ public class ClientErrorFilterTests
         new ConflictException("taken"),
         new PushRejectedException("rejected"),
         new FormatException("bad header"),
+        new ArgumentException("invalid invitation"),
         new UnsupportedProtocolVersionException(2),
     ];
 
@@ -38,6 +39,15 @@ public class ClientErrorFilterTests
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => InvokeThrowingAsync(error));
 
         Assert.Same(error, ex);
+    }
+
+    [Fact]
+    public async Task ProgrammingArgumentErrorsRemainServerErrors()
+    {
+        var missing = new ArgumentNullException("internal-secret-parameter");
+        var range = new ArgumentOutOfRangeException("internal-secret-parameter");
+        Assert.Same(missing, await Assert.ThrowsAsync<ArgumentNullException>(() => InvokeThrowingAsync(missing)));
+        Assert.Same(range, await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => InvokeThrowingAsync(range)));
     }
 
     [Fact]

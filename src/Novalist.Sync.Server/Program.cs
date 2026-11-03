@@ -28,7 +28,13 @@ else
     builder.Services.AddScoped<UpdateLog>();
 
     builder.Services.AddScoped<UserDirectory>();
+    builder.Services.AddSingleton<AccessDeliveryGate>();
     builder.Services.AddScoped<DeviceRegistry>();
+    builder.Services.AddSingleton<DeviceProofServer>();
+    builder.Services.AddSingleton<DeviceEnrollmentPolicy>();
+    builder.Services.AddSingleton<DeviceEnrollmentChallenges>();
+    builder.Services.AddSingleton<DeviceEnrollmentTokens>();
+    builder.Services.AddScoped<VerifiedDeviceEnrollment>();
     builder.Services.AddScoped<ProjectAccess>();
     builder.Services.AddSingleton(TimeProvider.System);
     builder.Services.AddSingleton<ConnectionRegistry>();
@@ -69,6 +75,8 @@ else
 {
     app.MapHub<SyncHub>(Protocol.HubPath);
     app.MapDeviceEndpoints();
+    app.MapVerifiedDeviceEndpoints();
+    app.MapDeviceEnrollmentEndpoint();
 }
 app.MapNativeClientEndpoint();
 
