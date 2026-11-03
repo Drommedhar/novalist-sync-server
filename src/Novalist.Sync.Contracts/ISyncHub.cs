@@ -2,6 +2,9 @@ namespace Novalist.Sync.Contracts;
 
 public interface ISyncHub
 {
+    Task<IReadOnlyList<ProjectMember>> ListProjectMembers(Guid projectId);
+    Task RemoveProjectMember(Guid projectId, Guid memberId);
+    Task DeleteProject(Guid projectId);
     Task<DeviceConnectionChallenge> GetDeviceChallenge();
     Task AuthenticateDevice(byte[] signature);
     Task CreateInvitation(Guid projectId, CreateInvitation request);

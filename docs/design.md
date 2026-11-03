@@ -654,6 +654,14 @@ MIME types and keys are only visible inside the encrypted manifest.
 Visible metadata: project and item counts, member lists, devices, timestamps,
 edit frequency per item, sizes, invitation expiry and claimant identities.
 
+Verified owner connections can list project members using `ListProjectMembers`.
+The response contains the existing account UUID, the stable string role
+(`Owner`, `Contributor` or `Viewer`) and username (or verified
+email when no nonblank username exists, otherwise the account UUID).
+`RemoveProjectMember` removes access and expires all unused project invitations.
+`DeleteProject` removes memberships, invitations and updates;
+the empty project row remains as an identifier tombstone. Both operations remove
+affected connections from live delivery and send `ProjectAccessEnded(projectId)`.
 Device authentication adds immutable 32-byte Ed25519 and X25519 public keys to
 device records, plus the linking device ID and its public signature when linked.
 `GET /devices/registration` returns the authenticated account's internal user
@@ -703,7 +711,8 @@ else on the server; they live in the encrypted structure doc (§5.1).
 Users log in through an external OIDC provider (Keycloak, authentik). The server
 stores no passwords. A user is identified by the token's issuer and `sub` claim,
 which never change; email and username are optional, refreshed from the token's
-claims, and only used to find people when inviting them (§8.5).
+claims, and used to find people when inviting them (§8.5) and to label the
+verified owner's member list. Only verified email claims are stored.
 
 OIDC authenticates the **user**, not the device. Verified devices additionally
 answer a fresh `GetDeviceChallenge` using `AuthenticateDevice` before project,
