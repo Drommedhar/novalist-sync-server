@@ -582,6 +582,32 @@ remember verified keys and **warn loudly** when a known user's keys change.
 Cursors, selections and "is in scene X" are encoded by the Yjs host (relative
 positions), sealed with `K_presence` by .NET, broadcast, never stored.
 
+`PublishPresence(Envelope)` relays to other connected project members through
+`ReceivePresence`. It checks the active device, current membership and epoch,
+message type, sender identity and envelope sizes. The ciphertext is limited
+to 4096 bytes. Presence never increments `serverSeq` or appears in catch-up.
+Clients throttle outgoing updates, reject stale/replayed presence and expire
+inactive cursors locally. The server does not interpret the encrypted state.
+
+Malformed, stale-epoch and unauthorized presence is rejected before recipient
+counting and delivery coordination. Transient sender sequences use the full
+nonzero unsigned 64-bit range because presence is never stored.
+Membership, epoch and active devices are rechecked under process-local account
+gates (in UUID order), then the project gate shared with access changes.
+Delivery holds no database transaction or row locks. Database writes can proceed
+while network delivery is pending; hub pushes wait for the bounded delivery
+barrier before appending and broadcasting.
+Each message snapshots at most 256 joined recipient connections, and takes
+account gates only for active candidate recipients and the sender. Presence is rejected
+explicitly above that fan-out limit; project editing remains available. Delivery
+targets only captured connections that still belong to the project, after
+checking membership and active devices again under the gates.
+The send has a one-second cancellation deadline passed into SignalR's outbound
+write. Access changes wait for an in-flight send to finish, then later sends
+exclude removed or revoked recipients. A timeout reports `Presence delivery
+timed out.`; clients may send their next fresh presence state. These gates share
+the existing single-instance restriction of connection revocation (§13).
+
 ### 8.9 Pausing and resuming
 
 - **Pause:** .NET closes the SignalR connection and stops sending. The project
@@ -716,7 +742,7 @@ verified owner's member list. Only verified email claims are stored.
 
 OIDC authenticates the **user**, not the device. Verified devices additionally
 answer a fresh `GetDeviceChallenge` using `AuthenticateDevice` before project,
-update or invitation operations. Public keys cannot be replaced under
+update, presence or invitation operations. Public keys cannot be replaced under
 an existing device ID or reused under another ID, including revoked records.
 Linked device records reference their authorizing device. The first verified registration serializes on the account
 and requires fresh MFA bound to both ordinary and recovery public-key records.

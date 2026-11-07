@@ -10,6 +10,8 @@ the minor version.
 
 ### Added
 
+- Contracts 1.5.0: Presence: transient encrypted `PublishPresence` and `ReceivePresence` messages. Delivery rechecks account, device and membership without persisting payloads or holding database locks across network sends.
+
 - Contracts 1.4.0: Membership management: owner-only member listing, removal and project deletion, stable role names, and `ProjectAccessEnded` notifications. New methods and records are additive.
 
 - Contracts 1.3.0: Invitations: owner-issued single-use claims, revocation tombstones and device/certificate-bound activation receipts, with authenticated hub and legacy HTTP entry points. Invitation records and hub methods are additive.

@@ -26,6 +26,7 @@ else
         .UseSnakeCaseNamingConvention());
 
     builder.Services.AddScoped<UpdateLog>();
+    builder.Services.AddScoped<PresenceAccess>();
 
     builder.Services.AddScoped<UserDirectory>();
     builder.Services.AddSingleton<AccessDeliveryGate>();
