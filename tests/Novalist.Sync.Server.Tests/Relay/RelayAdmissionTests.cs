@@ -2,7 +2,10 @@ using System.Net;
 using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using Novalist.Sync.Server.Relay;
 using Novalist.Sync.Server.Tests.Infrastructure;
 
 namespace Novalist.Sync.Server.Tests.Relay;
@@ -10,18 +13,18 @@ namespace Novalist.Sync.Server.Tests.Relay;
 public sealed class RelayAdmissionTests
 {
     [Fact]
-    public void AuthenticatedRelayRequiresRoomForBothAddressAndAccountQuotas()
+    public async Task AuthenticatedRelayRequiresRoomForBothAddressAndAccountQuotas()
     {
-        using var server = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        using var host = CreateConfigurationHost(new()
         {
-            builder.UseEnvironment("Development");
-            builder.UseSetting("Relay:Enabled", "true");
-            builder.UseSetting("Relay:MaxQuotaEntries", "1");
-            builder.UseSetting("Relay:Introspection:Endpoint", "https://idp.test/introspect");
-            builder.UseSetting("Relay:Introspection:ClientId", "test");
-            builder.UseSetting("Relay:Introspection:ClientSecret", "test");
+            ["Relay:Enabled"] = "true",
+            ["Relay:MaxQuotaEntries"] = "1",
+            ["Relay:Introspection:Endpoint"] = "https://idp.test/introspect",
+            ["Relay:Introspection:ClientId"] = "test",
+            ["Relay:Introspection:ClientSecret"] = "test"
         });
-        Assert.Contains("two quota entries", Assert.Throws<OptionsValidationException>(() => server.CreateClient()).Message);
+        var error = await Assert.ThrowsAsync<OptionsValidationException>(() => host.StartAsync(TestContext.Current.CancellationToken));
+        Assert.Contains("two quota entries", error.Message);
     }
 
     [Theory]
@@ -29,14 +32,14 @@ public sealed class RelayAdmissionTests
     [InlineData("2")]
     public async Task GlobalUpgradeAllowanceBelowThreeFailsValidation(string allowance)
     {
-        await using var server = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        using var host = CreateConfigurationHost(new()
         {
-            builder.UseEnvironment("Development");
-            builder.UseSetting("Relay:Enabled", "true");
-            builder.UseSetting("Relay:RequireAuthentication", "false");
-            builder.UseSetting("Relay:RequestsPerMinute", allowance);
+            ["Relay:Enabled"] = "true",
+            ["Relay:RequireAuthentication"] = "false",
+            ["Relay:RequestsPerMinute"] = allowance
         });
-        Assert.Contains("RequestsPerMinute", Assert.Throws<OptionsValidationException>(() => server.CreateClient()).Message);
+        var error = await Assert.ThrowsAsync<OptionsValidationException>(() => host.StartAsync(TestContext.Current.CancellationToken));
+        Assert.Contains("RequestsPerMinute", error.Message);
     }
 
     [Fact]
@@ -123,4 +126,11 @@ public sealed class RelayAdmissionTests
             Assert.False(result.Response.Headers.ContainsKey("Retry-After"));
         }
     }
+
+    private static IHost CreateConfigurationHost(Dictionary<string, string?> settings) =>
+        new HostBuilder()
+            .UseEnvironment(Environments.Development)
+            .ConfigureAppConfiguration(builder => builder.AddInMemoryCollection(settings))
+            .ConfigureServices((context, services) => services.AddRelay(context.Configuration))
+            .Build();
 }
