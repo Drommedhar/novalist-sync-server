@@ -699,7 +699,7 @@ the empty project row remains as an identifier tombstone. Both operations remove
 affected connections from live delivery and send `ProjectAccessEnded(projectId)`.
 Registered encrypted projects require `CommitProjectEpoch` for member removal.
 Members with no registered project device can be removed directly. Epoch
-commits lock the initiator and removed account in database UUID order, then
+commits lock the initiator and, when supplied, the removed account in database UUID order, then
 revalidate the initiating device before changing keys. The delivery barrier
 remains held through post-commit connection revocation, which finishes even
 when the initiating connection disconnects.
@@ -718,11 +718,16 @@ deletes expired staging data. Clients cancel on failure and retry from a fresh
 reservation if the deadline expires. Transitions then stage opaque checkpoint
 envelopes and individual opaque grants.
 The database atomically compares the previous epoch and last committed sequence,
-assigns checkpoint sequences through the normal log allocator, removes the chosen
-membership, retires all invitations, clears leases and publishes grants only to
-remaining registered devices. Members without a registered, authorized device
-do not block removal and receive no key grant until an owner authorizes their
-device. The commit still checks the reserved epoch and sequence atomically. Devices
+assigns checkpoint sequences through the normal log allocator, optionally removes
+the chosen membership, retires all invitations, clears leases and publishes grants only to
+remaining active registered devices. `CommitProjectEpoch.RemovedMemberId` may be
+omitted or null to rotate without removing a member, for example after revoking
+a stolen device or for periodic rotation. Revoke a stolen device before rotating;
+rotation alone does not revoke it, and every active registered device must receive
+a grant. Members without a registered, authorized device do not block rotation
+and receive no key grant. An API for an owner to authorize those devices and
+distribute their keys is not implemented yet.
+The commit still checks the reserved epoch and sequence atomically. Devices
 receive `ProjectEpochChanged` and restart against the owner-signed checkpoint
 boundary. Public metadata adds rotation IDs, device certificates, previous epochs,
 checkpoint boundary sequences, envelope/grant sizes and staging timestamps.

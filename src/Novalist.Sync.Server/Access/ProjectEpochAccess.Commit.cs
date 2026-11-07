@@ -16,13 +16,15 @@ public sealed partial class ProjectEpochAccess
             ?? throw new ConflictException("The project transition is unavailable.");
         await projects.EnsureIsOwnerAsync(user, projectId, ct);
         await using var delivery = await projects.PauseDeliveryAsync(projectId, ct);
-        await using var transaction = await AccountAccessLock.AcquireManyAsync(db, [user, request.RemovedMemberId], ct);
+        await using var transaction = await AccountAccessLock.AcquireManyAsync(db,
+            request.RemovedMemberId is { } removed ? [user, removed] : [user], ct);
         await EnsureDeviceAsync(user, device, ct);
         var project = await LockProjectAsync(projectId, ct);
         var stage = await LockStageAsync(request.RotationId, device, ct);
         if (stage.ProjectId != project.Id) throw new ConflictException("The project transition changed. Refresh and try again.");
         await projects.EnsureIsOwnerAsync(user, project.Id, ct);
-        if (!await db.Memberships.AnyAsync(value => value.ProjectId == project.Id && value.UserId == request.RemovedMemberId, ct))
+        if (request.RemovedMemberId.HasValue &&
+            !await db.Memberships.AnyAsync(value => value.ProjectId == project.Id && value.UserId == request.RemovedMemberId, ct))
             throw new ConflictException("The account being removed is not a member of this project.");
         CheckBoundary(project, stage.PreviousEpoch, stage.PreviousServerSeq);
         if (stage.Count == 0) throw new ConflictException("Upload the fresh encrypted checkpoint first.");
@@ -54,10 +56,13 @@ public sealed partial class ProjectEpochAccess
         if (advanced != 1) throw new ConflictException("The project changed during key rotation. Refresh and try again.");
         await db.SaveChangesAsync(ct);
         await CopyCheckpointAsync(user, stage, ct);
-        await db.Memberships.Where(value => value.ProjectId == project.Id && value.UserId == request.RemovedMemberId).ExecuteDeleteAsync(ct);
+        if (request.RemovedMemberId is { } memberId)
+        {
+            await db.Memberships.Where(value => value.ProjectId == project.Id && value.UserId == memberId).ExecuteDeleteAsync(ct);
+            await db.ProjectDeviceAuthorizations.Where(value => value.ProjectId == project.Id && db.Devices.Any(d => d.Id == value.DeviceId && d.UserId == memberId)).ExecuteDeleteAsync(ct);
+        }
         await db.Invitations.Where(value => value.ProjectId == project.Id).ExecuteUpdateAsync(set => set.SetProperty(value => value.ExpiresAt, DateTimeOffset.UnixEpoch), ct);
         await db.FieldLeases.Where(value => value.ProjectId == project.Id).ExecuteDeleteAsync(ct);
-        await db.ProjectDeviceAuthorizations.Where(value => value.ProjectId == project.Id && db.Devices.Any(d => d.Id == value.DeviceId && d.UserId == request.RemovedMemberId)).ExecuteDeleteAsync(ct);
         await db.SaveChangesAsync(ct);
         await db.ProjectEpochStages.Where(value => value.ProjectId == project.Id).ExecuteDeleteAsync(ct);
         await transaction.CommitAsync(ct);
