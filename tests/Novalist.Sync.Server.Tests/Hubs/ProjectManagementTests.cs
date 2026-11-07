@@ -54,8 +54,11 @@ public sealed class ProjectManagementTests(DatabaseFixture database)
         await Assert.ThrowsAsync<HubException>(() => guest.Hub.InvokeAsync("CreateProject", project, ct));
     }
 
-    [Fact]
-    public async Task RotationNotifiesRemainingMembersThroughTheHub()
+    [Theory]
+    [InlineData("member")]
+    [InlineData("omitted")]
+    [InlineData("null")]
+    public async Task RotationNotifiesRemainingMembersThroughTheHub(string removal)
     {
         var ct = TestContext.Current.CancellationToken;
         await using var server = new SyncServer(database);
@@ -87,9 +90,24 @@ public sealed class ProjectManagementTests(DatabaseFixture database)
         await owner.Hub.InvokeAsync<long>("StageProjectEpoch", rotation, checkpoint, ct);
         var grants = new[] { owner, remaining }.Select(participant => new ProjectEpochGrant(participant.DeviceId,
             RandomNumberGenerator.GetBytes(182), RandomNumberGenerator.GetBytes(128))).ToArray();
-        await owner.Hub.InvokeAsync("CommitProjectEpoch", new CommitProjectEpoch(rotation, removed.UserId, grants), ct);
+        var ended = new List<Guid>();
+        using var removalNotification = removed.Hub.On<Guid>("ProjectAccessEnded", id => ended.Add(id));
+        object request = removal switch
+        {
+            "member" => new CommitProjectEpoch(rotation, removed.UserId, grants),
+            "null" => new { RotationId = rotation, RemovedMemberId = (Guid?)null, Grants = grants },
+            _ => new { RotationId = rotation, Grants = grants }
+        };
+        await owner.Hub.InvokeAsync("CommitProjectEpoch", request, ct);
         Assert.Equal((project, 1U), await changed.Task.WaitAsync(TimeSpan.FromSeconds(5), ct));
-        await Assert.ThrowsAsync<HubException>(() => removed.Hub.InvokeAsync<ProjectEpochStatus>("GetProjectEpoch", project, ct));
+        if (removal == "member")
+            await Assert.ThrowsAsync<HubException>(() => removed.Hub.InvokeAsync<ProjectEpochStatus>("GetProjectEpoch", project, ct));
+        else
+        {
+            Assert.Equal(new ProjectEpochStatus(1, 1), await removed.Hub.InvokeAsync<ProjectEpochStatus>("GetProjectEpoch", project, ct));
+            Assert.Empty(ended);
+            Assert.Equal(3, (await owner.Hub.InvokeAsync<ProjectMember[]>("ListProjectMembers", project, ct)).Length);
+        }
     }
 
     [Fact]

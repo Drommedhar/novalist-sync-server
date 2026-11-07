@@ -58,7 +58,9 @@ public sealed partial class SyncHub
         await using var access = await devices.PauseAccessChangesAsync(UserId, Context.ConnectionAborted);
         await RequireVerifiedAccessAsync();
         var project = await epochs.CommitAsync(UserId, DeviceId, request, Context.ConnectionAborted,
-            projectId => revocation.NotifyRemovedAsync(projectId, request.RemovedMemberId, CancellationToken.None));
+            request.RemovedMemberId is { } memberId
+                ? projectId => revocation.NotifyRemovedAsync(projectId, memberId, CancellationToken.None)
+                : null);
         var state = await epochs.StatusAsync(UserId, project, Context.ConnectionAborted);
         await Clients.Group(ProjectGroup(project)).ProjectEpochChanged(project, state.Epoch);
     }
